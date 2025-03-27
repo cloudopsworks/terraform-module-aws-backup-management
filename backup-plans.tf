@@ -92,7 +92,7 @@ resource "aws_backup_selection" "this" {
       }
     }
   ]...)
-  name         = format("%s-%s-selection", each.key, each.value.plan_key)
+  name         = format("%s-selection", each.key)
   plan_id      = aws_backup_plan.this[each.value.plan_key].id
   iam_role_arn = var.vault.create ? aws_iam_role.backup_service_role[0].arn : each.value.role_arn
   dynamic "selection_tag" {
