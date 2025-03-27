@@ -136,6 +136,6 @@ resource "aws_backup_selection" "this" {
       }
     }
   }
-  resources     = try(each.value.resource.include_arn_list, [])
-  not_resources = try(each.value.resource.exclude_arn_list, [])
+  resources     = try(each.value.resource.include_arns, [])
+  not_resources = try(each.value.resource.exclude_arns, [])
 }
