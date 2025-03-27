@@ -1,4 +1,4 @@
-name: Terraform Transit Gateway Module
+name: Terraform AWS Backup Module Management
 #logo: logo/logo.jpg
 
 license: "APACHE2"
@@ -8,23 +8,132 @@ copyrights:
     url: "https://cloudops.works"
     year: "2024"
 
-github_repo: cloudopsworks/terraform-module-aws-vpc-setup
+github_repo: terraform-module-aws-backup-management
 
 description: |-
-  VPC Module for setting up transit gateway with ResourceAccessMananger support.
+  This Terraform module simplifies the creation and administration of AWS Backup resources in your AWS account, 
+  including configurable backup vaults, backup plans, region-specific settings, and advanced backup options. 
+  By leveraging this module, you can consistently enforce organizational backup strategies, manage encryption keys, 
+  and streamline cross-account or cross-region backup sharing.
 
 # Introduction to the project
-#introduction: |-
-#  This is an introduction.
+introduction: |-
+  This module allows you to manage AWS Backup Plans and related resources. It handles:
+  • Creation of backup vaults (optionally air-gapped for added security).
+  • Definition of backup plans, rules, and life cycle management.
+  • Optional creation and assignment of IAM roles and policies for backups.
+  • Support for advanced backup settings, region-level configuration, and legal holds.
 
 # How to use this project
-#usage: |-
+usage: |-
+  1. Ensure that you have Terragrunt installed and properly configured for your AWS environment.
+  2. Create or update a `terragrunt.hcl` (or similar file) with the source pointing to this module’s repository. For example:
+  ```hcl
+  terraform {
+    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
+  }
+
+  inputs = {
+    # Set module inputs here
+    vault = {
+      create = true
+    }
+
+    backup_plans = {
+      # Your backup plans configuration
+    }
+  }
+  ```
+  3. Run `terragrunt init` to initialize the module source.
+  4. Adjust and review your configuration as needed (e.g., specifying backup rules, vault encryption, region settings).
+  5. Execute `terragrunt plan` and `terragrunt apply` to deploy your AWS Backup configuration.
 
 # Example usage
-#examples: |-
+examples: |-
+  ## Minimal Configuration Example
+  
+  ```hcl
+  # terragrunt.hcl
+  terraform {
+    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
+  }
+
+  inputs = {
+    vault = {
+      create = true
+    }
+
+    backup_plans = {
+      primary = {
+        rules = {
+          daily = {
+            schedule           = "cron(0 12 * * ? *)"
+            timezone           = "UTC"
+            continuous_backup  = true
+          }
+        }
+      }
+    }
+  }
+  ```
+  
+  - Creates a default backup vault and a basic daily backup plan with continuous backup enabled.
+
+  ## Advanced Configuration Example
+  
+  ```hcl
+  # terragrunt.hcl
+  terraform {
+    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
+  }
+
+  inputs = {
+    region_settings = {
+      enabled = true
+      opt_ins = {
+        "LAMBDA" = "ENABLED"
+      }
+    }
+
+    vault = {
+      create                = true
+      encryption_create_key = true
+      force_destroy         = false
+    }
+
+    backup_plans = {
+      critical = {
+        rules = {
+          monthly = {
+            schedule           = "cron(0 0 1 * ? *)"
+            timezone           = "UTC"
+            continuous_backup  = false
+            lifecycle = {
+              cold_storage_after = 30
+              delete_after       = 365
+            }
+          }
+        }
+        advanced = {
+          backup_options = {
+            WindowsVSS = "enabled"
+          }
+          resource_type  = "EC2"
+        }
+      }
+    }
+  }
+  ```
+  
+  - Enables AWS Backup region settings and advanced resource-specific configurations.
+  - Creates a backup vault with KMS encryption.
+  - Declares a “critical” plan with a monthly backup rule and lifecycle settings for older snapshots.
 
 # How to get started quickly
-#quickstart: |-
+quickstart: |-
+  1. Install and configure Terragrunt and AWS credentials.
+  2. Set up your `terragrunt.hcl` as shown above (minimal or advanced usage).
+  3. Run Terragrunt commands (`init`, `plan`, `apply`) to get started quickly.
 
 include:
   - "docs/targets.md"
