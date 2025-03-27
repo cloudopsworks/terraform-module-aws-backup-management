@@ -9,7 +9,7 @@ resource "aws_backup_plan" "this" {
   dynamic "rule" {
     for_each = each.value.rules
     content {
-      rule_name = format("%s-%s-rule", rule.key, local.system_name_short)
+      rule_name = format("%s-%s-rule", each.key, rule.key)
       target_vault_name = !var.vault.create ? rule.value.target_vault_name : (
         !var.air_gapped.enabled ? aws_backup_vault.this[0].name : (
           aws_backup_logically_air_gapped_vault.this[0].name
@@ -92,7 +92,7 @@ resource "aws_backup_selection" "this" {
       }
     }
   ]...)
-  name         = format("%s-%s-%s-selection", each.key, each.value.plan_key, local.system_name_short)
+  name         = format("%s-%s-selection", each.key, each.value.plan_key)
   plan_id      = aws_backup_plan.this[each.value.plan_key].id
   iam_role_arn = var.vault.create ? aws_iam_role.backup_service_role[0].arn : each.value.role_arn
   dynamic "selection_tag" {
