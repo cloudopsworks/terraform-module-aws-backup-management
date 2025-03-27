@@ -54,3 +54,88 @@ resource "aws_backup_plan" "this" {
   }
   tags = local.all_tags
 }
+
+data "aws_iam_policy_document" "backup_service_role" {
+  count = var.vault.create ? 1 : 0
+  statement {
+    sid = "AWSBackupAssumeRole"
+    actions = [
+      "sts:AssumeRole"
+    ]
+    principals {
+      type = "Service"
+      identifiers = [
+        "backup.amazonaws.com"
+      ]
+    }
+  }
+}
+
+resource "aws_iam_role" "backup_service_role" {
+  count              = var.vault.create ? 1 : 0
+  name               = format("%s-service-role", local.name)
+  assume_role_policy = data.aws_iam_policy_document.backup_service_role[count.index].json
+}
+
+resource "aws_iam_role_policy_attachment" "backup_service_role" {
+  count      = var.vault.create ? 1 : 0
+  role       = aws_iam_role.backup_service_role[count.index].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+}
+
+resource "aws_backup_selection" "this" {
+  for_each = merge([
+    for key, plan in var.backup_plans : {
+      for rkey, res in plan.resources : "${key}-${rkey}" => {
+        plan_key = key
+        resource = res
+      }
+    }
+  ]...)
+  name         = format("%s-%s-%s-selection", each.key, each.value.plan_key, local.system_name_short)
+  plan_id      = aws_backup_plan.this[each.value.plan_key].id
+  iam_role_arn = var.vault.create ? aws_iam_role.backup_service_role[0].arn : each.value.role_arn
+  dynamic "selection_tag" {
+    for_each = try(each.value.resource.tags, [])
+    content {
+      type  = selection_tag.value.type
+      key   = selection_tag.value.key
+      value = selection_tag.value.value
+    }
+  }
+  dynamic "condition" {
+    for_each = try(each.value.resource.conditions, [])
+    content {
+      dynamic "string_equals" {
+        for_each = length(try(condition.value.string_equals, {})) > 0 ? [1] : []
+        content {
+          key   = condition.value.string_equals.key
+          value = condition.value.string_equals.value
+        }
+      }
+      dynamic "string_not_equals" {
+        for_each = length(try(condition.value.string_not_equals, {})) > 0 ? [1] : []
+        content {
+          key   = condition.value.string_not_equals.key
+          value = condition.value.string_not_equals.value
+        }
+      }
+      dynamic "string_like" {
+        for_each = length(try(condition.value.string_like, {})) > 0 ? [1] : []
+        content {
+          key   = condition.value.string_like.key
+          value = condition.value.string_like.value
+        }
+      }
+      dynamic "string_not_like" {
+        for_each = length(try(condition.value.string_not_like, {})) > 0 ? [1] : []
+        content {
+          key   = condition.value.string_not_like.key
+          value = condition.value.string_not_like.value
+        }
+      }
+    }
+  }
+  resources     = try(each.value.resource.include_arn_list, [])
+  not_resources = try(each.value.resource.exclude_arn_list, [])
+}
