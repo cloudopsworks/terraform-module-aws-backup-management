@@ -9,7 +9,7 @@ resource "aws_backup_plan" "this" {
   dynamic "rule" {
     for_each = each.value.rules
     content {
-      rule_name = format("%s-%s-rule", rule.value.key, local.system_name_short)
+      rule_name = format("%s-%s-rule", rule.key, local.system_name_short)
       target_vault_name = !var.vault.create ? rule.value.target_vault_name : (
         !var.air_gapped.enabled ? aws_backup_vault.this[0].name : (
           aws_backup_logically_air_gapped_vault.this[0].name
