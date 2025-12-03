@@ -75,6 +75,7 @@ resource "aws_iam_role" "backup_service_role" {
   count              = var.vault.create ? 1 : 0
   name               = format("%s-service-role", local.name)
   assume_role_policy = data.aws_iam_policy_document.backup_service_role[count.index].json
+  tags = local.all_tags
 }
 
 resource "aws_iam_role_policy_attachment" "backup_service_role" {
