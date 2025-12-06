@@ -110,29 +110,29 @@ resource "aws_backup_selection" "this" {
       dynamic "string_equals" {
         for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_equals")]
         content {
-          key   = condition.value.string_equals.key
-          value = condition.value.string_equals.value
+          key   = string_equals.value.string_equals.key
+          value = string_equals.value.string_equals.value
         }
       }
       dynamic "string_not_equals" {
         for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_not_equals")]
         content {
-          key   = condition.value.string_not_equals.key
-          value = condition.value.string_not_equals.value
+          key   = string_not_equals.value.string_not_equals.key
+          value = string_not_equals.value.string_not_equals.value
         }
       }
       dynamic "string_like" {
         for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_like")]
         content {
-          key   = condition.value.string_like.key
-          value = condition.value.string_like.value
+          key   = string_like.value.string_like.key
+          value = string_like.value.string_like.value
         }
       }
       dynamic "string_not_like" {
         for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_not_like")]
         content {
-          key   = condition.value.string_not_like.key
-          value = condition.value.string_not_like.value
+          key   = string_not_like.value.string_not_like.key
+          value = string_not_like.value.string_not_like.value
         }
       }
     }
