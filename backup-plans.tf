@@ -75,7 +75,7 @@ resource "aws_iam_role" "backup_service_role" {
   count              = var.vault.create ? 1 : 0
   name               = format("%s-service-role", local.name)
   assume_role_policy = data.aws_iam_policy_document.backup_service_role[count.index].json
-  tags = local.all_tags
+  tags               = local.all_tags
 }
 
 resource "aws_iam_role_policy_attachment" "backup_service_role" {
@@ -105,31 +105,31 @@ resource "aws_backup_selection" "this" {
     }
   }
   dynamic "condition" {
-    for_each = try(each.value.resource.conditions, [])
+    for_each = length(try(each.value.resource.conditions, [])) > 0 ? [1] : []
     content {
       dynamic "string_equals" {
-        for_each = length(try(condition.value.string_equals, {})) > 0 ? [1] : []
+        for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_equals")]
         content {
           key   = condition.value.string_equals.key
           value = condition.value.string_equals.value
         }
       }
       dynamic "string_not_equals" {
-        for_each = length(try(condition.value.string_not_equals, {})) > 0 ? [1] : []
+        for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_not_equals")]
         content {
           key   = condition.value.string_not_equals.key
           value = condition.value.string_not_equals.value
         }
       }
       dynamic "string_like" {
-        for_each = length(try(condition.value.string_like, {})) > 0 ? [1] : []
+        for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_like")]
         content {
           key   = condition.value.string_like.key
           value = condition.value.string_like.value
         }
       }
       dynamic "string_not_like" {
-        for_each = length(try(condition.value.string_not_like, {})) > 0 ? [1] : []
+        for_each = [for item in each.value.resource.conditions : item if contains(keys(item), "string_not_like")]
         content {
           key   = condition.value.string_not_like.key
           value = condition.value.string_not_like.value
