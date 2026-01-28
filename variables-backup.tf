@@ -34,7 +34,6 @@ variable "vault" {
     create           = false
     name             = ""
     name_prefix      = ""
-    air_gapped       = false
     encryption_key   = ""
     encryption_alias = ""
     force_destroy    = false
