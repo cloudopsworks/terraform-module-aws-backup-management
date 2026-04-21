@@ -6,21 +6,23 @@ license: "APACHE2"
 copyrights:
   - name: "Cloud Ops Works LLC"
     url: "https://cloudops.works"
-    year: "2024"
+    year: "2026"
 
 github_repo: terraform-module-aws-backup-management
 
 description: |-
   Terraform module to create and manage AWS Backup resources at scale: backup vaults (including logically air-gapped
   vaults), backup plans and selections, advanced backup options per resource type, AWS Backup Region Settings, and
-  optional cross-account sharing via AWS RAM. It helps standardize backup strategies, enforce encryption with KMS,
-  and streamline operations across environments and accounts.
+  optional cross-account sharing via AWS RAM. It helps standardize backup strategies, enforce encryption with KMS
+  (including automatic key creation with always-on rotation), and streamline operations across environments and accounts.
 
 # Introduction to the project
 introduction: |-
   This module provisions and manages AWS Backup across your AWS accounts and regions.
   It supports:
   • Backup vault creation with optional KMS encryption and logically air-gapped mode.
+  • KMS key management via vault.encryption sub-object: create, bring-your-own ARN, or reference by alias.
+    Key rotation is always enabled; rotation period defaults to 90 days and is configurable (90–2560 days).
   • Backup plans, rules, lifecycles, and cross-region copy actions.
   • Backup selections by tags, ARNs, and conditional expressions.
   • Advanced backup options (e.g., Windows VSS) and region settings opt-ins.
@@ -54,13 +56,25 @@ usage: |-
 
     # Backup vault (standard or air-gapped)
     vault = {
-      create                = true                 # (Optional) Create the vault with this module. Default: true
-      name                  = ""                   # (Optional) Explicit name; required if name_prefix is empty
-      name_prefix           = "acme-prod"         # (Optional) Used when name is empty; final: <prefix>-<system>-vault
-      encryption_create_key = false                # (Optional) Create a new KMS key for this vault. Default: false
-      encryption_key        = ""                   # (Optional) Existing KMS Key ARN when not creating a key
-      encryption_alias      = "alias/backup-kms"  # (Optional) Existing KMS Alias when key ARN not provided
-      force_destroy         = false                # (Optional) Allow delete even with recovery points. Default: false
+      create      = true          # (Optional) Create the vault with this module. Default: true
+      name        = ""            # (Optional) Explicit name; required if name_prefix is empty
+      name_prefix = "acme-prod"  # (Optional) Used when name is empty; final: <prefix>-<system>-vault
+      force_destroy = false       # (Optional) Allow delete even with recovery points. Default: false
+
+      # Encryption configuration (preferred — use instead of deprecated flat fields)
+      encryption = {
+        create          = false             # (Optional) Create a new KMS key and alias for this vault. Default: false
+        key             = ""               # (Optional) Existing KMS Key ARN. Used when create=false
+        alias           = "alias/backup-kms" # (Optional) Existing KMS Alias. Used when key is empty and create=false
+        deletion_window = 30               # (Optional) KMS key deletion window in days (7–30). Default: 30
+        key_description = ""              # (Optional) Custom KMS key description. Default: auto-generated
+        rotation_period = 90              # (Optional) Rotation period in days (90–2560). Default: 90. Always enabled.
+      }
+
+      # DEPRECATED flat fields — replaced by vault.encryption.* above; kept for backwards compatibility
+      # encryption_create_key = false   # DEPRECATED: use vault.encryption.create
+      # encryption_key        = ""      # DEPRECATED: use vault.encryption.key
+      # encryption_alias      = ""      # DEPRECATED: use vault.encryption.alias
     }
 
     air_gapped = {                  # (Optional) Logically Air-Gapped vault settings
@@ -208,9 +222,12 @@ examples: |-
     }
 
     vault = {
-      create                = true
-      name_prefix           = "acme-prod"
-      encryption_create_key = true
+      create      = true
+      name_prefix = "acme-prod"
+      encryption = {
+        create          = true
+        rotation_period = 90
+      }
     }
 
     air_gapped = { enabled = true, min_retention_days = 30, max_retention_days = 3650 }

@@ -1,5 +1,5 @@
 ##
-# (c) 2021-2025
+# (c) 2021-2026
 #     Cloud Ops Works LLC - https://cloudops.works/
 #     Find us on:
 #       GitHub: https://github.com/cloudopsworks
@@ -14,29 +14,53 @@
 #   create: true               # (Optional) Whether to create a backup vault in this module. Default: true.
 #   name: "primary"            # (Optional) Explicit vault name. Required if name_prefix is empty. Mutually exclusive with name_prefix.
 #   name_prefix: "org-prod"    # (Optional) Prefix to build the vault name as "<prefix>-<system>-vault". Required if name is empty.
-#   encryption_create_key: false  # (Optional) Create a new KMS key for the vault. If true, module creates key and alias. Default: false.
-#   encryption_key: "arn:aws:kms:...:key/..."  # (Optional) Existing KMS Key ARN to encrypt the vault. Ignored if encryption_create_key=true.
-#   encryption_alias: "alias/backup-kms"       # (Optional) Existing KMS Alias name (e.g. alias/my-key). Used when encryption_key not provided and encryption_create_key=false.
-#   force_destroy: false        # (Optional) Allow vault deletion even if it contains recovery points. Default: false.
+#   force_destroy: false       # (Optional) Allow vault deletion even if it contains recovery points. Default: false.
+#
+#   # Preferred encryption configuration
+#   encryption:
+#     create: false            # (Optional) Create a new KMS key and alias for this vault. Default: false.
+#     key: ""                  # (Optional) Existing KMS Key ARN. Used when create=false.
+#     alias: "alias/my-key"   # (Optional) Existing KMS Alias (format: alias/<name>). Used when key is empty and create=false.
+#     deletion_window: 30     # (Optional) KMS key deletion window in days (7–30). Default: 30.
+#     key_description: ""     # (Optional) Custom KMS key description. Default: auto-generated from vault name.
+#     rotation_period: 90     # (Optional) KMS key rotation period in days (90–2560). Default: 90. Rotation is always enabled.
+#
+#   # DEPRECATED flat encryption fields — use vault.encryption.* above instead
+#   encryption_create_key: false  # DEPRECATED: use vault.encryption.create
+#   encryption_key: ""            # DEPRECATED: use vault.encryption.key
+#   encryption_alias: ""          # DEPRECATED: use vault.encryption.alias
 #
 variable "vault" {
   description = "(optional) Vault Configuration"
   type = object({
-    create                = optional(bool, true)   # (Optional) Create the backup vault with this module. Default: true
-    name                  = optional(string, "")  # (Optional) Vault name. Required if name_prefix is not set. Mutually exclusive with name_prefix
-    name_prefix           = optional(string, "")  # (Optional) Vault name prefix. Required if name is not set. Mutually exclusive with name
-    encryption_create_key = optional(bool, false)  # (Optional) Create a new KMS key and alias for encryption. Default: false
-    encryption_key        = optional(string, "")  # (Optional) KMS Key ARN to use for encryption. Used when encryption_create_key=false
-    encryption_alias      = optional(string, "")  # (Optional) KMS Alias name (format: alias/<name>) to use if encryption_key not set and encryption_create_key=false
-    force_destroy         = optional(bool, false)  # (Optional) Force destroy the vault even if it contains backups. Default: false
+    create      = optional(bool, true) # (Optional) Create the backup vault with this module. Default: true
+    name        = optional(string, "") # (Optional) Vault name. Required if name_prefix is not set. Mutually exclusive with name_prefix
+    name_prefix = optional(string, "") # (Optional) Vault name prefix. Required if name is not set. Mutually exclusive with name
+
+    # Preferred encryption sub-object — takes precedence over the deprecated flat fields below.
+    encryption = optional(object({
+      create          = optional(bool, false) # (Optional) Create a new KMS key and alias for the vault. Default: false
+      key             = optional(string, "")  # (Optional) Existing KMS Key ARN. Used when create=false
+      alias           = optional(string, "")  # (Optional) Existing KMS Alias (format: alias/<name>). Used when key is empty and create=false
+      deletion_window = optional(number, 30)  # (Optional) KMS key deletion window in days (7–30). Default: 30
+      key_description = optional(string, "")  # (Optional) Custom description for the created KMS key. Default: auto-generated from vault name
+      rotation_period = optional(number, 90)  # (Optional) KMS key rotation period in days (90–2560). Default: 90. Rotation is always enabled
+    }), null)
+
+    # DEPRECATED: use vault.encryption.create instead
+    encryption_create_key = optional(bool, null) # DEPRECATED: use vault.encryption.create
+    # DEPRECATED: use vault.encryption.key instead
+    encryption_key = optional(string, null) # DEPRECATED: use vault.encryption.key
+    # DEPRECATED: use vault.encryption.alias instead
+    encryption_alias = optional(string, null) # DEPRECATED: use vault.encryption.alias
+
+    force_destroy = optional(bool, false) # (Optional) Force destroy the vault even if it contains backups. Default: false
   })
   default = {
-    create           = false
-    name             = ""
-    name_prefix      = ""
-    encryption_key   = ""
-    encryption_alias = ""
-    force_destroy    = false
+    create        = false
+    name          = ""
+    name_prefix   = ""
+    force_destroy = false
   }
 }
 
@@ -52,8 +76,8 @@ variable "vault" {
 variable "ram" {
   description = "(optional) If true, the backup vault will be shared with other AWS accounts."
   type = object({
-    enabled  = optional(bool, false)        # (Optional) Enable RAM sharing. Default: false
-    accounts = optional(list(string), [])   # (Optional) AWS Account IDs to share with when enabled. Default: []
+    enabled  = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false
+    accounts = optional(list(string), []) # (Optional) AWS Account IDs to share with when enabled. Default: []
   })
   default = {
     enabled  = false
@@ -112,8 +136,8 @@ variable "ram" {
 #
 variable "backup_plans" {
   description = "(optional) List of backup plans to create. If not set, no backup plans will be created"
-  type        = any    # (Optional) Free-form object map as documented above.
-  default     = {}     # (Optional) No plans by default.
+  type        = any # (Optional) Free-form object map as documented above.
+  default     = {}  # (Optional) No plans by default.
 }
 
 ##
@@ -130,8 +154,8 @@ variable "backup_plans" {
 #
 variable "legal_holds" {
   description = "(optional) List of legal holds to create. If not set, no legal holds will be created"
-  type        = any   # (Optional) Free-form object map as documented above.
-  default     = {}    # (Optional) No legal holds by default.
+  type        = any # (Optional) Free-form object map as documented above.
+  default     = {}  # (Optional) No legal holds by default.
 }
 
 ##
@@ -145,9 +169,9 @@ variable "legal_holds" {
 variable "air_gapped" {
   description = "(optional) Air gapped vault configuration"
   type = object({
-    enabled            = optional(bool, false)  # (Optional) Enable logically air-gapped vault. Default: false
-    min_retention_days = optional(number, 0)    # (Optional) Minimum retention in days. Default: 0
-    max_retention_days = optional(number, 0)    # (Optional) Maximum retention in days. Default: 0
+    enabled            = optional(bool, false) # (Optional) Enable logically air-gapped vault. Default: false
+    min_retention_days = optional(number, 0)   # (Optional) Minimum retention in days. Default: 0
+    max_retention_days = optional(number, 0)   # (Optional) Maximum retention in days. Default: 0
   })
   default = {
     min_retention_days = 0
@@ -169,8 +193,8 @@ variable "air_gapped" {
 variable "region_settings" {
   description = "(optional) AWS Backup Region Settings configuration"
   type = object({
-    enabled               = optional(bool, false)        # (Optional) Enable region settings management. Default: false
-    opt_ins               = optional(map(string), {})    # (Optional) Resource opt-in map. Values: ENABLED|DISABLED. Default: {}
-    management_preference = optional(map(string), {})    # (Optional) Management preference map. Values: SYSTEM|USER. Default: {}
+    enabled               = optional(bool, false)     # (Optional) Enable region settings management. Default: false
+    opt_ins               = optional(map(string), {}) # (Optional) Resource opt-in map. Values: ENABLED|DISABLED. Default: {}
+    management_preference = optional(map(string), {}) # (Optional) Management preference map. Values: SYSTEM|USER. Default: {}
   })
 }
