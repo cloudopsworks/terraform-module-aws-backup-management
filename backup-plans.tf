@@ -13,12 +13,8 @@ resource "aws_backup_plan" "this" {
   dynamic "rule" {
     for_each = each.value.rules
     content {
-      rule_name = format("%s-%s-rule", each.key, rule.key)
-      target_vault_name = !var.vault.create ? rule.value.target_vault_name : (
-        !var.air_gapped.enabled ? aws_backup_vault.this[0].name : (
-          aws_backup_logically_air_gapped_vault.this[0].name
-        )
-      )
+      rule_name                    = format("%s-%s-rule", each.key, rule.key)
+      target_vault_name            = !var.vault.create ? try(rule.value.target_vault_name, null) : local.vault_name
       schedule                     = try(rule.value.schedule, null)
       schedule_expression_timezone = try(rule.value.timezone, null)
       enable_continuous_backup     = try(rule.value.continuous_backup, false)
@@ -50,13 +46,22 @@ resource "aws_backup_plan" "this" {
     }
   }
   dynamic "advanced_backup_setting" {
-    for_each = length(try(each.value.advanced, {})) > 0 ? [1] : []
+    for_each = length(try(each.value.advanced, {})) > 0 ? [each.value.advanced] : []
     content {
-      backup_options = try(advanced_backup_setting.value.backup_options, null)
-      resource_type  = try(advanced_backup_setting.value.resource_type, null)
+      backup_options = advanced_backup_setting.value.backup_options
+      resource_type  = advanced_backup_setting.value.resource_type
     }
   }
   tags = local.all_tags
+
+  lifecycle {
+    precondition {
+      condition = var.vault.create || alltrue([
+        for rule_key, rule in each.value.rules : try(rule.target_vault_name, null) != null
+      ])
+      error_message = "Every rule in backup_plans[\"${each.key}\"] must set target_vault_name when vault.create is false, because the module does not create a vault to target."
+    }
+  }
 }
 
 data "aws_iam_policy_document" "backup_service_role" {
@@ -91,8 +96,9 @@ resource "aws_iam_role_policy_attachment" "backup_service_role" {
 resource "aws_backup_selection" "this" {
   for_each = merge([
     for key, plan in var.backup_plans : {
-      for rkey, res in plan.resources : "${key}-${rkey}" => {
+      for rkey, res in try(plan.resources, {}) : "${key}-${rkey}" => {
         plan_key = key
+        role_arn = try(plan.role_arn, null)
         resource = res
       }
     }
@@ -143,4 +149,11 @@ resource "aws_backup_selection" "this" {
   }
   resources     = try(each.value.resource.include_arns, [])
   not_resources = try(each.value.resource.exclude_arns, [])
+
+  lifecycle {
+    precondition {
+      condition     = var.vault.create || each.value.role_arn != null
+      error_message = "backup_plans[\"${each.value.plan_key}\"].role_arn is required when vault.create is false, because the module does not create a backup service role in that case."
+    }
+  }
 }

@@ -38,6 +38,15 @@ introduction: |-
   - Backup selections by tag, by explicit ARN, and by condition expressions.
   - A module-managed IAM backup service role, created automatically when the module owns the vault.
   - Advanced backup options per resource type (e.g. Windows VSS) and AWS Backup Region Settings opt-ins.
+  - Cross-account vault sharing through AWS RAM, including sharing outside the AWS Organization.
+
+  ## Outputs
+
+  The module exports the vault, KMS, IAM, plan, selection, and RAM identifiers so downstream modules can
+  reference them — for example `vault_arn` as a `copy_action.destination_vault_arn` in another region, or
+  `backup_role_arn` when attaching selections elsewhere. Outputs tied to optional resources return `null`
+  when those resources are not created (e.g. `vault_arn` when `vault.create = false`). See the Outputs
+  table below for the full list.
 
   ## Resource naming
 
@@ -55,18 +64,26 @@ introduction: |-
   Where `<system>` is a short slug built from the organization unit, environment name, environment type,
   spoke identifier, and region.
 
-  ## Reserved inputs
+  ## Cross-account sharing
 
-  The `ram` and `legal_holds` variables are accepted by the module and validated as part of its interface,
-  but no `aws_ram_*` or `aws_backup_legal_hold` resources are provisioned yet. Set them only to pin the
-  intended configuration ahead of a future release.
+  Setting `ram.enabled = true` creates an AWS RAM resource share for the vault and associates every
+  principal listed in `ram.accounts`. Sharing requires `vault.create = true`, since the module can only
+  share a vault it manages. Sharing with accounts outside your AWS Organization additionally requires
+  `ram.allow_external_principals = true`.
 
-  ## Known limitations
+  ## Legal holds are not supported
 
-  - Backup selections currently resolve their IAM role only from the module-managed backup service role.
-    Running with `vault.create = false` together with `backup_plans.<plan>.resources` does not pick up the
-    per-plan `role_arn` and will fail during plan. Until this is addressed, use `vault.create = true`, or
-    omit `resources` and manage the selections outside this module.
+  The `legal_holds` variable exists to keep the module interface stable, but it is **not implemented**:
+  the AWS provider exposes no legal hold resource or data source, so there is nothing for the module to
+  manage. The variable is validated to be empty, so a configuration is never silently ignored. Create
+  legal holds with `aws backup create-legal-hold` or the console until provider support lands.
+
+  ## Using an externally managed vault
+
+  With `vault.create = false` the module creates neither the vault nor the backup service role. In that
+  mode each plan must supply its own `role_arn`, and every rule must name the existing vault through
+  `target_vault_name`. The module enforces the `role_arn` requirement with a precondition, so a missing
+  value fails during plan with an explicit message rather than at apply time.
 
 # How to use this project
 usage: |-
@@ -133,12 +150,13 @@ usage: |-
   # backup_plans: # (Optional) Map of backup plans to create, keyed by plan name. Default: {} (no plans created)
   backup_plans: {}
 
-  # ram: # (Optional) Cross-account vault sharing. RESERVED — accepted but not provisioned yet
+  # ram: # (Optional) Cross-account vault sharing through AWS RAM. Requires vault.create=true
   ram:
-    enabled: false          # (Optional) Reserved for AWS RAM sharing of the vault. Default: false
-    accounts: []            # (Optional) AWS account IDs to share the vault with. Default: []
+    enabled: false          # (Optional) Share the managed vault via AWS RAM. Default: false
+    accounts: []            # (Required when enabled) AWS account IDs (12 digits) or Organizations ARNs. Default: []
+    allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-  # legal_holds: # (Optional) Legal holds. RESERVED — accepted but not provisioned yet. Default: {}
+  # legal_holds: # (Unsupported) Must stay empty — the AWS provider has no legal hold resource. Default: {}
   legal_holds: {}
   ```
 
@@ -148,7 +166,8 @@ usage: |-
   backup_plans:
     primary:                                    # Plan name fragment; final name is "primary-<system>-plan"
       # role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"
-      #                                         # (Optional) Only consulted when vault.create=false
+      #                                         # (Required when vault.create=false and resources are set)
+      #                                         #   Ignored when vault.create=true; the module-created role is used
       rules:                                    # (Required) Map of backup rules, keyed by rule name
         daily:
           # target_vault_name: "existing-vault" # (Required when vault.create=false) Pre-existing target vault
@@ -374,10 +393,39 @@ examples: |-
   Logically air-gapped vaults are always managed by an AWS-owned key, so the `vault.encryption` settings do
   not apply to them.
 
-  ## Attaching plans to an existing vault
+  ## Sharing the vault across accounts
 
-  > **Note:** see *Known limitations* — combining `vault.create: false` with a `resources` block is not
-  > functional yet, because the per-plan `role_arn` is not resolved for selections.
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-shared"
+    encryption:
+      create: true
+
+  region_settings:
+    enabled: false
+
+  ram:
+    enabled: true
+    accounts:
+      - "111122223333"
+      - "444455556666"
+    allow_external_principals: false   # true only when sharing outside your AWS Organization
+
+  backup_plans:
+    central:
+      rules:
+        daily:
+          schedule: "cron(0 4 * * ? *)"
+          lifecycle:
+            delete_after: 90
+  ```
+
+  Creates the vault, a RAM resource share, and one principal association per listed account. Consumers
+  can pick up the share through the `ram_resource_share_arn` and `vault_arn` outputs.
+
+  ## Attaching plans to an existing vault
 
   ```yaml
   # inputs.yaml

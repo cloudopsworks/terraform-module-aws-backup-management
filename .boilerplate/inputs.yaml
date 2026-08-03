@@ -53,8 +53,9 @@ region_settings:
 # backup_plans: # (Optional) Map of backup plans to create, keyed by plan name. Default: {} (no plans created)
 #   <plan_key>:                                   # Plan name fragment; the final name is "<plan_key>-<system_name_short>-plan"
 #     role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"
-#                                                 # (Optional) IAM role used by the selections. Only consulted when vault.create=false;
-#                                                 #   when vault.create=true the module-created backup service role is used
+#                                                 # (Required when vault.create=false and this plan defines resources)
+#                                                 #   IAM role assumed by the backup selections. Ignored when vault.create=true,
+#                                                 #   where the module-created backup service role is used instead
 #     rules:                                      # (Required) Map of backup rules, keyed by rule name
 #       <rule_key>:                               # The final rule name is "<plan_key>-<rule_key>-rule"
 #         target_vault_name: "existing-vault"     # (Required when vault.create=false) Name of the pre-existing target vault.
@@ -107,18 +108,16 @@ region_settings:
 #           - "arn:aws:ec2:us-east-1:111122223333:volume/vol-def"
 backup_plans: {}
 
-# ram: # (Optional) Cross-account vault sharing via AWS RAM. RESERVED — the input is accepted but no RAM resources are provisioned yet
+# ram: # (Optional) Cross-account sharing of the vault through AWS RAM. Requires vault.create=true
 ram:
-  enabled: false # (Optional) Reserved for AWS RAM sharing of the vault. Default: false
-  # accounts: # (Optional) AWS account IDs to share the vault with. Default: []
+  enabled: false # (Optional) Create a RAM resource share for the managed vault. Default: false
+  # accounts: # (Required when enabled) Principals to share with: 12-digit AWS account IDs or AWS Organizations ARNs. Default: []
   #   - "111122223333"
+  #   - "arn:aws:organizations::111122223333:ou/o-abc123/ou-abc1-12345678"
   accounts: []
+  allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-# legal_holds: # (Optional) Legal holds. RESERVED — the input is accepted but no legal hold resources are provisioned yet. Default: {}
-#   <hold_key>:
-#     description: "Litigation hold for case 1234"  # (Optional) Human-readable description of the hold
-#     resource_arns:                                # (Required) ARNs placed under legal hold
-#       - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
-#     tags:                                         # (Optional) Tags applied to the legal hold
-#       Case: "1234"
+# legal_holds: # (Unsupported) Not implemented — the AWS provider exposes no legal hold resource, so this
+#   must remain empty. A non-empty value fails validation rather than being silently ignored.
+#   Create legal holds with `aws backup create-legal-hold` or the console instead. Default: {}
 legal_holds: {}
