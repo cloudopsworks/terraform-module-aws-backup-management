@@ -1,5 +1,5 @@
 ##
-# (c) 2021-2025
+# (c) 2021-2026
 #     Cloud Ops Works LLC - https://cloudops.works/
 #     Find us on:
 #       GitHub: https://github.com/cloudopsworks
@@ -9,7 +9,7 @@
 
 module "tags" {
   source  = "cloudopsworks/tags/local"
-  version = "1.0.9"
+  version = "1.0.10"
 
   env = {
     organization_name = var.org.organization_name

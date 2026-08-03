@@ -1,1 +1,124 @@
 # Module configuration
+#
+# AWS Backup Management — per-deployment inputs.
+# Loaded by terragrunt.hcl as local.local_vars and mapped into the module inputs block.
+#
+# Variables NOT listed here are supplied automatically by the Terragrunt hierarchy:
+#   is_hub      -> injected by the boilerplate/template engine
+#   spoke_def   -> sourced from spoke-inputs.yaml
+#   org         -> sourced from env-inputs.yaml
+#   extra_tags  -> built from the merged *-tags.json files
+#
+
+# vault: # (Optional) Backup vault configuration. Default: {create: false, name: "", name_prefix: "", force_destroy: false}
+vault:
+  create: true # (Optional) Create the backup vault with this module. Default: true (the module-level default object sets false)
+  name: "" # (Optional) Explicit vault name. Required when name_prefix is empty. Mutually exclusive with name_prefix. Default: ""
+  name_prefix: "acme-prod" # (Optional) Prefix used to build the name as "<prefix>-<system_name_short>-vault". Required when name is empty. Default: ""
+  force_destroy: false # (Optional) Allow vault deletion even if it still holds recovery points. Default: false
+  # encryption: # (Optional) Preferred encryption block. Takes precedence over the deprecated flat fields below. Default: null
+  encryption:
+    create: false # (Optional) Create a new KMS key and alias for this vault. Default: false
+    key: "" # (Optional) Existing KMS Key ARN. Used when create=false. Default: ""
+    alias: "" # (Optional) Existing KMS Alias, format "alias/<name>". Used when key is empty and create=false. Default: ""
+    deletion_window: 30 # (Optional) KMS key deletion window in days. Valid: 7-30. Default: 30
+    key_description: "" # (Optional) Description for the created KMS key. Default: "" (auto-generated as "KMS key for <vault name>")
+    rotation_period: 90 # (Optional) KMS key rotation period in days. Valid: 90-2560. Default: 90. Rotation is always enabled
+  # DEPRECATED flat encryption fields — superseded by vault.encryption.* above.
+  # They are only read when vault.encryption is omitted.
+  # encryption_create_key: false # DEPRECATED (Optional) Use vault.encryption.create instead. Default: null
+  # encryption_key: ""           # DEPRECATED (Optional) Use vault.encryption.key instead. Default: ""
+  # encryption_alias: ""         # DEPRECATED (Optional) Use vault.encryption.alias instead. Default: ""
+
+# air_gapped: # (Optional) Logically air-gapped vault settings. When enabled a logically air-gapped vault replaces the standard vault
+air_gapped:
+  enabled: false # (Optional) Create a logically air-gapped backup vault instead of a standard vault. Default: false
+  min_retention_days: 0 # (Optional) Minimum retention in days allowed for recovery points in the air-gapped vault. Default: 0
+  max_retention_days: 0 # (Optional) Maximum retention in days allowed for recovery points in the air-gapped vault. Default: 0
+
+# region_settings: # (Required) AWS Backup Region Settings for the deployment region. The variable has no default, so the key must be present
+region_settings:
+  enabled: false # (Optional) Apply AWS Backup region settings in this region. Default: false
+  # opt_ins: # (Optional) Map of resource type => ENABLED|DISABLED. Default: {}
+  #   Valid resource types include: Aurora, CloudFormation, DocumentDB, DynamoDB, EBS, EC2, EFS, FSx,
+  #   Neptune, RDS, Redshift, S3, "SAP HANA on Amazon EC2", "Storage Gateway", Timestream, VirtualMachine
+  #   DynamoDB: "ENABLED"
+  #   EBS: "ENABLED"
+  opt_ins: {}
+  # management_preference: # (Optional) Map of resource type => SYSTEM|USER backup management preference. Default: {}
+  #   DynamoDB: "SYSTEM"
+  #   EFS: "SYSTEM"
+  management_preference: {}
+
+# backup_plans: # (Optional) Map of backup plans to create, keyed by plan name. Default: {} (no plans created)
+#   <plan_key>:                                   # Plan name fragment; the final name is "<plan_key>-<system_name_short>-plan"
+#     role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"
+#                                                 # (Optional) IAM role used by the selections. Only consulted when vault.create=false;
+#                                                 #   when vault.create=true the module-created backup service role is used
+#     rules:                                      # (Required) Map of backup rules, keyed by rule name
+#       <rule_key>:                               # The final rule name is "<plan_key>-<rule_key>-rule"
+#         target_vault_name: "existing-vault"     # (Required when vault.create=false) Name of the pre-existing target vault.
+#                                                 #   Ignored when vault.create=true, where the module-created vault is targeted
+#         schedule: "cron(0 12 * * ? *)"          # (Optional) CRON or rate expression. Default: null (no schedule)
+#         timezone: "UTC"                         # (Optional) IANA timezone used to evaluate the schedule. Example: America/New_York. Default: null (UTC)
+#         continuous_backup: false                # (Optional) Enable continuous (point-in-time) backup. Default: false
+#         start_window: 60                        # (Optional) Minutes after the scheduled time in which the job must start. Default: null (AWS default 60)
+#         completion_window: 180                  # (Optional) Minutes after the start window in which the job must complete. Default: null (AWS default 180)
+#         recovery_point_tags:                    # (Optional) Tags applied to every recovery point created by this rule. Default: null
+#           Purpose: "daily"
+#         lifecycle:                              # (Optional) Retention lifecycle for the recovery points. Default: omitted
+#           cold_storage_after: 30                # (Optional) Days after creation to move the recovery point to cold storage
+#           delete_after: 365                     # (Optional) Days after creation to delete the recovery point.
+#                                                 #   Must be at least cold_storage_after + 90 when cold storage is used
+#           opt_in: true                          # (Optional) Archive for supported resources (opt_in_to_archive_for_supported_resources)
+#         copy_action:                            # (Optional) Copy recovery points to another vault, optionally cross-region. Default: omitted
+#           destination_vault_arn: "arn:aws:backup:us-west-2:111122223333:backup-vault:dr"
+#                                                 # (Required inside copy_action) Destination backup vault ARN
+#           lifecycle:                            # (Optional) Retention lifecycle applied to the copied recovery points
+#             cold_storage_after: 30
+#             delete_after: 730
+#             opt_in: true
+#     advanced:                                   # (Optional) Advanced backup settings for the plan. Default: omitted
+#       resource_type: "EC2"                      # (Optional) Resource type the options apply to. AWS currently supports only "EC2"
+#       backup_options:                           # (Optional) Options map; the accepted keys depend on resource_type
+#         WindowsVSS: "enabled"                   #   EC2 Windows instances. Valid: enabled|disabled
+#     resources:                                  # (Optional) Backup selections for this plan, keyed by selection name. Default: omitted
+#       <resource_key>:                           #   The final selection name is "<plan_key>-<resource_key>-selection"
+#         tags:                                   # (Optional) Select resources by tag. Default: []
+#           - type: "STRINGEQUALS"                #   (Required) Match type. Valid: STRINGEQUALS
+#             key: "backup"                       #   (Required) Tag key to match
+#             value: "true"                       #   (Required) Tag value to match
+#         conditions:                             # (Optional) Condition expressions; each entry holds exactly one block. Default: []
+#           - string_equals:                      #   (Optional) Exact match
+#               key: "aws:ResourceTag/Env"        #     (Required) Condition key, prefixed with aws:ResourceTag/
+#               value: "prod"                     #     (Required) Condition value
+#           - string_not_equals:                  #   (Optional) Negated exact match
+#               key: "aws:ResourceTag/Env"
+#               value: "dev"
+#           - string_like:                        #   (Optional) Wildcard match
+#               key: "aws:ResourceTag/App"
+#               value: "*api*"
+#           - string_not_like:                    #   (Optional) Negated wildcard match
+#               key: "aws:ResourceTag/App"
+#               value: "*sandbox*"
+#         include_arns:                           # (Optional) Explicit resource ARNs to include. Default: []
+#           - "arn:aws:ec2:us-east-1:111122223333:volume/vol-abc"
+#         exclude_arns:                           # (Optional) Explicit resource ARNs to exclude. Default: []
+#           - "arn:aws:ec2:us-east-1:111122223333:volume/vol-def"
+backup_plans: {}
+
+# ram: # (Optional) Cross-account vault sharing via AWS RAM. RESERVED — the input is accepted but no RAM resources are provisioned yet
+ram:
+  enabled: false # (Optional) Reserved for AWS RAM sharing of the vault. Default: false
+  # accounts: # (Optional) AWS account IDs to share the vault with. Default: []
+  #   - "111122223333"
+  accounts: []
+
+# legal_holds: # (Optional) Legal holds. RESERVED — the input is accepted but no legal hold resources are provisioned yet. Default: {}
+#   <hold_key>:
+#     description: "Litigation hold for case 1234"  # (Optional) Human-readable description of the hold
+#     resource_arns:                                # (Required) ARNs placed under legal hold
+#       - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
+#     tags:                                         # (Optional) Tags applied to the legal hold
+#       Case: "1234"
+legal_holds: {}

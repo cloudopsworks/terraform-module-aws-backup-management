@@ -1,6 +1,14 @@
 name: Terraform AWS Backup Management Module
 #logo: logo/logo.jpg
 
+badges:
+  - name: Latest Release
+    image: https://img.shields.io/github/release/cloudopsworks/terraform-module-aws-backup-management.svg?style=for-the-badge
+    url: https://github.com/cloudopsworks/terraform-module-aws-backup-management/releases/latest
+  - name: Last Updated
+    image: https://img.shields.io/github/last-commit/cloudopsworks/terraform-module-aws-backup-management.svg?style=for-the-badge
+    url: https://github.com/cloudopsworks/terraform-module-aws-backup-management/commits
+
 license: "APACHE2"
 
 copyrights:
@@ -12,260 +20,401 @@ github_repo: terraform-module-aws-backup-management
 
 description: |-
   Terraform module to create and manage AWS Backup resources at scale: backup vaults (including logically air-gapped
-  vaults), backup plans and selections, advanced backup options per resource type, AWS Backup Region Settings, and
-  optional cross-account sharing via AWS RAM. It helps standardize backup strategies, enforce encryption with KMS
-  (including automatic key creation with always-on rotation), and streamline operations across environments and accounts.
+  vaults), backup plans and selections, advanced backup options per resource type, and AWS Backup Region Settings.
+  It helps standardize backup strategies, enforce encryption with KMS (including automatic key creation with
+  always-on rotation), and streamline operations across environments and accounts.
 
 # Introduction to the project
 introduction: |-
   This module provisions and manages AWS Backup across your AWS accounts and regions.
+
   It supports:
-  • Backup vault creation with optional KMS encryption and logically air-gapped mode.
-  • KMS key management via vault.encryption sub-object: create, bring-your-own ARN, or reference by alias.
-    Key rotation is always enabled; rotation period defaults to 90 days and is configurable (90–2560 days).
-  • Backup plans, rules, lifecycles, and cross-region copy actions.
-  • Backup selections by tags, ARNs, and conditional expressions.
-  • Advanced backup options (e.g., Windows VSS) and region settings opt-ins.
-  • Optional vault sharing via AWS RAM for multi-account strategies.
+
+  - Backup vault creation with optional KMS encryption, or a logically air-gapped vault.
+  - KMS key management through the `vault.encryption` block: create a new key, bring your own key ARN, or
+    reference an existing key by alias. Key rotation is always enabled; the rotation period defaults to
+    90 days and is configurable between 90 and 2560 days.
+  - Backup plans with rules, retention lifecycles, and cross-region/cross-vault copy actions.
+  - Backup selections by tag, by explicit ARN, and by condition expressions.
+  - A module-managed IAM backup service role, created automatically when the module owns the vault.
+  - Advanced backup options per resource type (e.g. Windows VSS) and AWS Backup Region Settings opt-ins.
+
+  ## Resource naming
+
+  Names are derived from the organization and spoke values supplied by the Terragrunt hierarchy:
+
+  | Resource        | Name pattern                                  |
+  |-----------------|-----------------------------------------------|
+  | Backup vault    | `<vault.name>` or `<vault.name_prefix>-<system>-vault` |
+  | KMS alias       | `alias/<vault name>`                          |
+  | Backup plan     | `<plan_key>-<system>-plan`                    |
+  | Backup rule     | `<plan_key>-<rule_key>-rule`                  |
+  | Backup selection| `<plan_key>-<resource_key>-selection`         |
+  | IAM role        | `<vault name>-service-role`                   |
+
+  Where `<system>` is a short slug built from the organization unit, environment name, environment type,
+  spoke identifier, and region.
+
+  ## Reserved inputs
+
+  The `ram` and `legal_holds` variables are accepted by the module and validated as part of its interface,
+  but no `aws_ram_*` or `aws_backup_legal_hold` resources are provisioned yet. Set them only to pin the
+  intended configuration ahead of a future release.
+
+  ## Known limitations
+
+  - Backup selections currently resolve their IAM role only from the module-managed backup service role.
+    Running with `vault.create = false` together with `backup_plans.<plan>.resources` does not pick up the
+    per-plan `role_arn` and will fail during plan. Until this is addressed, use `vault.create = true`, or
+    omit `resources` and manage the selections outside this module.
 
 # How to use this project
 usage: |-
-  1. Ensure Terragrunt is installed and AWS credentials are configured.
-  2. In your live repo, create a `terragrunt.hcl` pointing to this module and declare inputs.
-  3. Copy the input structure below and tailor to your environment. Comments explain each field and defaults.
+  This module is consumed through Terragrunt. The recommended way to bootstrap a deployment is the
+  built-in `terragrunt scaffold` command, which sources `.boilerplate/boilerplate.yml` from this repository
+  and generates `terragrunt.hcl`, `inputs.yaml`, and `local-tags.json` in the target directory.
+
+  ### 1. Scaffold the deployment
+
+  ```sh
+  # Create and enter the target deployment directory
+  mkdir -p production/us-east-1/001/backup-management
+  cd production/us-east-1/001/backup-management
+
+  # Scaffold the module (do NOT use --working-dir)
+  terragrunt scaffold github.com/cloudopsworks/terraform-module-aws-backup-management
+
+  # Edit inputs.yaml with deployment-specific values
+  vi inputs.yaml
+
+  # Apply
+  terragrunt apply
+  ```
+
+  ### 2. Fill in `inputs.yaml`
+
+  Scaffold pre-populates `inputs.yaml` with every module variable, already annotated with
+  `(Required)`/`(Optional)` markers and defaults. Variables supplied by the Terragrunt hierarchy —
+  `is_hub`, `spoke_def`, `org`, and `extra_tags` — are not part of this file.
+
+  ```yaml
+  # Module configuration
+
+  # vault: # (Optional) Backup vault configuration. Default: {create: false, name: "", name_prefix: "", force_destroy: false}
+  vault:
+    create: true            # (Optional) Create the backup vault with this module. Default: true
+    name: ""                # (Optional) Explicit vault name. Required when name_prefix is empty. Mutually exclusive with name_prefix. Default: ""
+    name_prefix: "acme-prod" # (Optional) Prefix used to build the name as "<prefix>-<system_name_short>-vault". Required when name is empty. Default: ""
+    force_destroy: false    # (Optional) Allow vault deletion even if it still holds recovery points. Default: false
+    encryption:             # (Optional) Preferred encryption block. Takes precedence over the deprecated flat fields. Default: null
+      create: false         # (Optional) Create a new KMS key and alias for this vault. Default: false
+      key: ""               # (Optional) Existing KMS Key ARN. Used when create=false. Default: ""
+      alias: ""             # (Optional) Existing KMS Alias, format "alias/<name>". Used when key is empty and create=false. Default: ""
+      deletion_window: 30   # (Optional) KMS key deletion window in days. Valid: 7-30. Default: 30
+      key_description: ""   # (Optional) Description for the created KMS key. Default: "" (auto-generated)
+      rotation_period: 90   # (Optional) KMS key rotation period in days. Valid: 90-2560. Default: 90. Rotation is always enabled
+    # DEPRECATED flat encryption fields — only read when vault.encryption is omitted
+    # encryption_create_key: false # DEPRECATED (Optional) Use vault.encryption.create instead. Default: null
+    # encryption_key: ""           # DEPRECATED (Optional) Use vault.encryption.key instead. Default: ""
+    # encryption_alias: ""         # DEPRECATED (Optional) Use vault.encryption.alias instead. Default: ""
+
+  # air_gapped: # (Optional) Logically air-gapped vault settings; replaces the standard vault when enabled
+  air_gapped:
+    enabled: false          # (Optional) Create a logically air-gapped backup vault instead of a standard vault. Default: false
+    min_retention_days: 0   # (Optional) Minimum retention in days for recovery points in the air-gapped vault. Default: 0
+    max_retention_days: 0   # (Optional) Maximum retention in days for recovery points in the air-gapped vault. Default: 0
+
+  # region_settings: # (Required) AWS Backup Region Settings. The variable has no default, so the key must be present
+  region_settings:
+    enabled: false          # (Optional) Apply AWS Backup region settings in this region. Default: false
+    opt_ins: {}             # (Optional) Map of resource type => ENABLED|DISABLED. Default: {}
+    management_preference: {} # (Optional) Map of resource type => SYSTEM|USER. Default: {}
+
+  # backup_plans: # (Optional) Map of backup plans to create, keyed by plan name. Default: {} (no plans created)
+  backup_plans: {}
+
+  # ram: # (Optional) Cross-account vault sharing. RESERVED — accepted but not provisioned yet
+  ram:
+    enabled: false          # (Optional) Reserved for AWS RAM sharing of the vault. Default: false
+    accounts: []            # (Optional) AWS account IDs to share the vault with. Default: []
+
+  # legal_holds: # (Optional) Legal holds. RESERVED — accepted but not provisioned yet. Default: {}
+  legal_holds: {}
+  ```
+
+  A populated `backup_plans` entry looks like this:
+
+  ```yaml
+  backup_plans:
+    primary:                                    # Plan name fragment; final name is "primary-<system>-plan"
+      # role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"
+      #                                         # (Optional) Only consulted when vault.create=false
+      rules:                                    # (Required) Map of backup rules, keyed by rule name
+        daily:
+          # target_vault_name: "existing-vault" # (Required when vault.create=false) Pre-existing target vault
+          schedule: "cron(0 12 * * ? *)"        # (Optional) CRON or rate expression. Default: null
+          timezone: "UTC"                       # (Optional) IANA timezone for the schedule. Default: null (UTC)
+          continuous_backup: true               # (Optional) Enable point-in-time backup. Default: false
+          start_window: 60                      # (Optional) Minutes to start the job. Default: null (AWS default 60)
+          completion_window: 180                # (Optional) Minutes to complete the job. Default: null (AWS default 180)
+          recovery_point_tags:                  # (Optional) Tags applied to created recovery points. Default: null
+            Purpose: "daily"
+          lifecycle:                            # (Optional) Retention lifecycle. Default: omitted
+            cold_storage_after: 30              # (Optional) Days before moving to cold storage
+            delete_after: 365                   # (Optional) Days before deletion; at least cold_storage_after + 90
+            opt_in: true                        # (Optional) Archive for supported resources
+          copy_action:                          # (Optional) Copy recovery points to another vault. Default: omitted
+            destination_vault_arn: "arn:aws:backup:us-west-2:111122223333:backup-vault:dr"
+            lifecycle:
+              cold_storage_after: 30
+              delete_after: 730
+              opt_in: true
+      advanced:                                 # (Optional) Advanced backup settings. Default: omitted
+        resource_type: "EC2"                    # (Optional) AWS currently supports only "EC2"
+        backup_options:
+          WindowsVSS: "enabled"                 # Valid: enabled|disabled
+      resources:                                # (Optional) Backup selections, keyed by selection name
+        by_tag:
+          tags:                                 # (Optional) Select resources by tag. Default: []
+            - type: "STRINGEQUALS"              # (Required) Match type. Valid: STRINGEQUALS
+              key: "backup"                     # (Required) Tag key
+              value: "true"                     # (Required) Tag value
+        explicit:
+          include_arns:                         # (Optional) Explicit ARNs to include. Default: []
+            - "arn:aws:ec2:us-east-1:111122223333:volume/vol-abc"
+          exclude_arns: []                      # (Optional) Explicit ARNs to exclude. Default: []
+          conditions:                           # (Optional) Condition expressions. Default: []
+            - string_equals:
+                key: "aws:ResourceTag/Env"
+                value: "prod"
+            - string_like:
+                key: "aws:ResourceTag/App"
+                value: "*api*"
+  ```
+
+  ### 3. The generated `terragrunt.hcl`
+
+  Scaffold renders the file below — there is no need to hand-author it. Note how `inputs.yaml` is loaded
+  as `local.local_vars` and wired into the `inputs` block, while `org`, `spoke_def`, and `extra_tags` come
+  from the parent hierarchy.
 
   ```hcl
-  # terragrunt.hcl
+  locals {
+    local_vars  = yamldecode(file("./inputs.yaml"))
+    spoke_vars  = yamldecode(file(find_in_parent_folders("spoke-inputs.yaml")))
+    region_vars = yamldecode(file(find_in_parent_folders("region-inputs.yaml")))
+    env_vars    = yamldecode(file(find_in_parent_folders("env-inputs.yaml")))
+    global_vars = yamldecode(file(find_in_parent_folders("global-inputs.yaml")))
+
+    local_tags  = jsondecode(file("./local-tags.json"))
+    spoke_tags  = jsondecode(file(find_in_parent_folders("spoke-tags.json")))
+    region_tags = jsondecode(file(find_in_parent_folders("region-tags.json")))
+    env_tags    = jsondecode(file(find_in_parent_folders("env-tags.json")))
+    global_tags = jsondecode(file(find_in_parent_folders("global-tags.json")))
+
+    tags = merge(
+      local.global_tags,
+      local.env_tags,
+      local.region_tags,
+      local.spoke_tags,
+      local.local_tags
+    )
+  }
+
+  include "root" {
+    path = find_in_parent_folders("root.hcl")
+  }
+
   terraform {
-    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
+    source = "git::https://github.com/cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.2.5"
   }
 
   inputs = {
-    # Core topology
-    is_hub   = false                 # (Optional) Is this a hub (true) or spoke (false) deployment? Default: false
-    spoke_def = "001"               # (Optional) Three-digit spoke identifier as string. Default: "001"
-    org = {                          # (Required) Organization details used for naming and tagging
-      organization_name = "acme"    # (Required) Your organization slug
-      organization_unit = "plat"    # (Required) Business unit or team
-      environment_type  = "prod"    # (Required) One of: prod|stage|dev|test|sandbox (free-form allowed)
-      environment_name  = "primary" # (Required) Environment name or alias
-    }
-    extra_tags = {                   # (Optional) Additional resource tags. Default: {}
-      Owner = "backup-team"
-    }
-
-    # Backup vault (standard or air-gapped)
-    vault = {
-      create      = true          # (Optional) Create the vault with this module. Default: true
-      name        = ""            # (Optional) Explicit name; required if name_prefix is empty
-      name_prefix = "acme-prod"  # (Optional) Used when name is empty; final: <prefix>-<system>-vault
-      force_destroy = false       # (Optional) Allow delete even with recovery points. Default: false
-
-      # Encryption configuration (preferred — use instead of deprecated flat fields)
-      encryption = {
-        create          = false             # (Optional) Create a new KMS key and alias for this vault. Default: false
-        key             = ""               # (Optional) Existing KMS Key ARN. Used when create=false
-        alias           = "alias/backup-kms" # (Optional) Existing KMS Alias. Used when key is empty and create=false
-        deletion_window = 30               # (Optional) KMS key deletion window in days (7–30). Default: 30
-        key_description = ""              # (Optional) Custom KMS key description. Default: auto-generated
-        rotation_period = 90              # (Optional) Rotation period in days (90–2560). Default: 90. Always enabled.
-      }
-
-      # DEPRECATED flat fields — replaced by vault.encryption.* above; kept for backwards compatibility
-      # encryption_create_key = false   # DEPRECATED: use vault.encryption.create
-      # encryption_key        = ""      # DEPRECATED: use vault.encryption.key
-      # encryption_alias      = ""      # DEPRECATED: use vault.encryption.alias
-    }
-
-    air_gapped = {                  # (Optional) Logically Air-Gapped vault settings
-      enabled            = false    # (Optional) Create LAG vault instead of standard. Default: false
-      min_retention_days = 0        # (Optional) Minimum retention in days
-      max_retention_days = 0        # (Optional) Maximum retention in days
-    }
-
-    # Region settings
-    region_settings = {             # (Optional) Manage AWS Backup region settings
-      enabled = false               # (Optional) Apply settings in this region. Default: false
-      opt_ins = {                   # (Optional) Resource opt-ins: ENABLED|DISABLED
-        LAMBDA = "ENABLED"
-      }
-      management_preference = {     # (Optional) SYSTEM|USER per resource type
-        EBS = "SYSTEM"
-      }
-    }
-
-    # Optional cross-account sharing of the vault via RAM
-    ram = {
-      enabled  = false              # (Optional) Enable AWS RAM share of the vault. Default: false
-      accounts = [                  # (Optional) Account IDs to share with
-        "111122223333"
-      ]
-    }
-
-    # Backup plans (rules, selections, advanced options)
-    backup_plans = {
-      primary = {
-        # Optional: custom role when vault.create=false, else module-managed role is used
-        # role_arn = "arn:aws:iam::111122223333:role/BackupServiceRole"
-
-        rules = {
-          daily = {
-            schedule           = "cron(0 12 * * ? *)"  # (Optional) CRON or rate expression
-            timezone           = "UTC"                 # (Optional) IANA timezone
-            continuous_backup  = true                  # (Optional) Default: false
-            start_window       = 60                    # (Optional) Minutes
-            completion_window  = 180                   # (Optional) Minutes
-            recovery_point_tags = {                    # (Optional) Tags on recovery points
-              Purpose = "daily"
-            }
-            lifecycle = {                              # (Optional)
-              cold_storage_after = 30
-              delete_after       = 365
-              opt_in             = true               # Maps to opt_in_to_archive_for_supported_resources
-            }
-            copy_action = {                            # (Optional)
-              destination_vault_arn = "arn:aws:backup:us-west-2:111122223333:backup-vault:dr"
-              lifecycle = {
-                cold_storage_after = 30
-                delete_after       = 365
-                opt_in             = true
-              }
-            }
-          }
-        }
-
-        advanced = {                                  # (Optional) Advanced backup settings
-          resource_type  = "EC2"                      # e.g., EC2, EBS, RDS, DDB, EFS, FSx, EKS
-          backup_options = {
-            WindowsVSS = "enabled"                    # Example for Windows/EC2
-          }
-        }
-
-        resources = {                                  # (Optional) Selection definitions
-          by_tag = {
-            tags = [
-              { type = "STRINGEQUALS", key = "backup", value = "true" }
-            ]
-          }
-          explicit = {
-            include_arns = [
-              "arn:aws:ec2:us-east-1:111122223333:volume/vol-abc"
-            ]
-            exclude_arns = []
-            conditions = [
-              { string_equals = { key = "aws:ResourceTag/Env", value = "prod" } },
-              { string_like   = { key = "aws:ResourceTag/App", value = "*api*" } }
-            ]
-          }
-        }
-      }
-    }
-
-    # Optional: define legal holds (if used by your governance framework)
-    legal_holds = {
-      # case123 = {
-      #   description   = "Litigation hold for case 123"
-      #   resource_arns = ["arn:aws:ec2:...:volume/vol-123"]
-      #   tags          = { Case = "123" }
-      # }
-    }
+    is_hub          = false
+    org             = local.env_vars.org
+    spoke_def       = local.spoke_vars.spoke
+    region_settings = local.local_vars.region_settings
+    vault           = try(local.local_vars.vault, {})
+    air_gapped      = try(local.local_vars.air_gapped, {})
+    backup_plans    = try(local.local_vars.backup_plans, {})
+    ram             = try(local.local_vars.ram, {})
+    legal_holds     = try(local.local_vars.legal_holds, {})
+    extra_tags      = local.tags
   }
   ```
-
-  4. Run `terragrunt init` to initialize the module.
-  5. Execute `terragrunt plan` and `terragrunt apply` to deploy AWS Backup.
 
 # Example usage
 examples: |-
-  ## Minimal Terragrunt Example
+  All examples below show the `inputs.yaml` produced by `terragrunt scaffold`; `terragrunt.hcl` is left as
+  generated.
 
-  ```hcl
-  terraform {
-    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
-  }
+  ## Minimal — vault plus a daily plan
 
-  inputs = {
-    org = { organization_name = "acme", organization_unit = "plat", environment_type = "dev", environment_name = "blue" }
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-dev"
 
-    vault = { create = true, name_prefix = "acme-dev" }
+  region_settings:
+    enabled: false
 
-    backup_plans = {
-      default = {
-        rules = {
-          daily = {
-            schedule          = "cron(0 2 * * ? *)"
-            timezone          = "UTC"
-            continuous_backup = true
-          }
-        }
-      }
-    }
-  }
+  backup_plans:
+    default:
+      rules:
+        daily:
+          schedule: "cron(0 2 * * ? *)"
+          timezone: "UTC"
+          continuous_backup: true
+      resources:
+        by_tag:
+          tags:
+            - type: "STRINGEQUALS"
+              key: "backup"
+              value: "true"
   ```
 
-  - Creates a vault and a basic daily plan with point-in-time recovery.
+  Creates an unencrypted vault, a daily plan with point-in-time recovery, a module-managed backup service
+  role, and a tag-based selection.
 
-  ## Advanced Terragrunt Example (Air-Gapped + Copy)
+  ## Encrypted vault with a module-managed KMS key
 
-  ```hcl
-  terraform {
-    source = "git::git@github.com:cloudopsworks/terraform-module-aws-backup-management.git?ref=v1.0.0"
-  }
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-prod"
+    force_destroy: false
+    encryption:
+      create: true          # Module creates the KMS key and alias/<vault name>
+      deletion_window: 30
+      rotation_period: 90   # Rotation is always enabled
 
-  inputs = {
-    is_hub = true
-    org = { organization_name = "acme", organization_unit = "sec", environment_type = "prod", environment_name = "primary" }
+  region_settings:
+    enabled: true
+    opt_ins:
+      DynamoDB: "ENABLED"
+      EBS: "ENABLED"
 
-    region_settings = {
-      enabled = true
-      opt_ins = { LAMBDA = "ENABLED", EBS = "ENABLED" }
-    }
-
-    vault = {
-      create      = true
-      name_prefix = "acme-prod"
-      encryption = {
-        create          = true
-        rotation_period = 90
-      }
-    }
-
-    air_gapped = { enabled = true, min_retention_days = 30, max_retention_days = 3650 }
-
-    backup_plans = {
-      critical = {
-        rules = {
-          monthly = {
-            schedule          = "cron(0 0 1 * ? *)"
-            timezone          = "UTC"
-            lifecycle = { cold_storage_after = 30, delete_after = 365 }
-            copy_action = {
-              destination_vault_arn = "arn:aws:backup:us-west-2:111122223333:backup-vault:dr"
-              lifecycle = { cold_storage_after = 60, delete_after = 730 }
-            }
-          }
-        }
-        advanced = {
-          resource_type  = "EC2"
-          backup_options = { WindowsVSS = "enabled" }
-        }
-        resources = {
-          tag_sel = { tags = [{ type = "STRINGEQUALS", key = "backup", value = "true" }] }
-        }
-      }
-    }
-  }
+  backup_plans:
+    critical:
+      rules:
+        monthly:
+          schedule: "cron(0 0 1 * ? *)"
+          timezone: "UTC"
+          lifecycle:
+            cold_storage_after: 30
+            delete_after: 365
+          copy_action:
+            destination_vault_arn: "arn:aws:backup:us-west-2:111122223333:backup-vault:dr"
+            lifecycle:
+              cold_storage_after: 60
+              delete_after: 730
+      advanced:
+        resource_type: "EC2"
+        backup_options:
+          WindowsVSS: "enabled"
+      resources:
+        tag_sel:
+          tags:
+            - type: "STRINGEQUALS"
+              key: "backup"
+              value: "true"
   ```
 
-  - Enables region settings, creates an air-gapped vault with KMS, and configures monthly backups with cross-region copy.
+  Creates a KMS-encrypted vault, enables region opt-ins, and configures monthly backups with a cross-region
+  copy and Windows VSS support.
+
+  ## Bring your own KMS key
+
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-prod"
+    encryption:
+      create: false
+      key: "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+
+  region_settings:
+    enabled: false
+
+  backup_plans: {}
+  ```
+
+  Reference an existing key by alias instead by leaving `key` empty and setting
+  `alias: "alias/my-backup-key"`.
+
+  ## Logically air-gapped vault
+
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-vault"
+
+  air_gapped:
+    enabled: true
+    min_retention_days: 30
+    max_retention_days: 3650
+
+  region_settings:
+    enabled: false
+
+  backup_plans:
+    immutable:
+      rules:
+        weekly:
+          schedule: "cron(0 3 ? * SUN *)"
+          timezone: "UTC"
+          lifecycle:
+            delete_after: 365
+  ```
+
+  Logically air-gapped vaults are always managed by an AWS-owned key, so the `vault.encryption` settings do
+  not apply to them.
+
+  ## Attaching plans to an existing vault
+
+  > **Note:** see *Known limitations* — combining `vault.create: false` with a `resources` block is not
+  > functional yet, because the per-plan `role_arn` is not resolved for selections.
+
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: false           # The module does not create the vault or the IAM role
+
+  region_settings:
+    enabled: false
+
+  backup_plans:
+    shared:
+      role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"  # Required when vault.create=false
+      rules:
+        daily:
+          target_vault_name: "central-backup-vault"                 # Required when vault.create=false
+          schedule: "cron(0 5 * * ? *)"
+          timezone: "UTC"
+          lifecycle:
+            delete_after: 90
+      resources:
+        by_tag:
+          tags:
+            - type: "STRINGEQUALS"
+              key: "backup"
+              value: "true"
+  ```
 
 # How to get started quickly
 quickstart: |-
-  1. Install Terragrunt and configure AWS credentials (e.g., via AWS SSO or environment variables).
-  2. Create `terragrunt.hcl` using the Usage section as a template.
-  3. Run `terragrunt init` to download the module.
-  4. Run `terragrunt plan` to review changes; then `terragrunt apply` to provision resources.
-  5. Verify the created AWS Backup vault(s), plan(s), and selection(s) in the AWS Console.
+  1. Install Terragrunt and OpenTofu/Terraform, and configure AWS credentials (for example via AWS SSO).
+  2. Create the deployment directory and run
+     `terragrunt scaffold github.com/cloudopsworks/terraform-module-aws-backup-management` inside it.
+  3. Edit the generated `inputs.yaml`. At minimum set `vault.name_prefix` (or `vault.name`) and add at
+     least one entry under `backup_plans`.
+  4. Run `terragrunt init` to initialize the module.
+  5. Run `terragrunt plan` to review the changes, then `terragrunt apply` to provision AWS Backup.
+  6. Verify the resulting vault, plans, and selections in the AWS Backup console.
 
 include:
   - "docs/targets.md"
