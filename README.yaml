@@ -39,6 +39,7 @@ introduction: |-
   - A module-managed IAM backup service role, created automatically when the module owns the vault.
   - Advanced backup options per resource type (e.g. Windows VSS) and AWS Backup Region Settings opt-ins.
   - Cross-account vault sharing through AWS RAM, including sharing outside the AWS Organization.
+  - Legal holds that suspend expiration of the selected recovery points, via the awscc provider.
 
   ## Outputs
 
@@ -71,12 +72,19 @@ introduction: |-
   share a vault it manages. Sharing with accounts outside your AWS Organization additionally requires
   `ram.allow_external_principals = true`.
 
-  ## Legal holds are not supported
+  ## Legal holds
 
-  The `legal_holds` variable exists to keep the module interface stable, but it is **not implemented**:
-  the AWS provider exposes no legal hold resource or data source, so there is nothing for the module to
-  manage. The variable is validated to be empty, so a configuration is never silently ignored. Create
-  legal holds with `aws backup create-legal-hold` or the console until provider support lands.
+  Legal holds preserve the selected recovery points: while a hold is active they cannot be deleted and
+  their lifecycle-based expiration is suspended. Removing an entry from `legal_holds` cancels the hold.
+
+  Because the classic AWS provider exposes no legal hold resource, these are provisioned with the
+  **`hashicorp/awscc`** (Cloud Control) provider. Deployments that set `legal_holds` therefore need the
+  `awscc` provider available in addition to `aws`; both read the same standard AWS credential sources.
+  When `legal_holds` is left empty no legal hold resources are created, but the provider requirement
+  still applies to the module as a whole.
+
+  `title`, `description`, and the recovery point selection are immutable in AWS Backup, so changing any
+  of them replaces the hold.
 
   ## Using an externally managed vault
 
@@ -156,7 +164,18 @@ usage: |-
     accounts: []            # (Required when enabled) AWS account IDs (12 digits) or Organizations ARNs. Default: []
     allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-  # legal_holds: # (Unsupported) Must stay empty — the AWS provider has no legal hold resource. Default: {}
+  # legal_holds: # (Optional) Legal holds keyed by name. Requires the awscc provider. Default: {}
+  #   case1234:
+  #     title: "Case 1234"                           # (Required) Short title of the legal hold
+  #     description: "Litigation hold for case 1234" # (Required) Description of the legal hold
+  #     recovery_point_selection:                    # (Optional) Criteria selecting the held recovery points. Default: {} (all)
+  #       vault_names:                               # (Optional) Vault names whose recovery points are held. Default: []
+  #         - "acme-prod-vault"
+  #       resource_identifiers:                      # (Optional) Resource ARNs whose recovery points are held. Default: []
+  #         - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
+  #       date_range:                                # (Optional) Restrict the hold to a window. Default: null
+  #         from_date: "2026-01-01T00:00:00Z"        # (Required within date_range) Inclusive start, ISO 8601
+  #         to_date: "2026-12-31T23:59:59Z"          # (Required within date_range) Inclusive end, ISO 8601
   legal_holds: {}
   ```
 
@@ -424,6 +443,37 @@ examples: |-
 
   Creates the vault, a RAM resource share, and one principal association per listed account. Consumers
   can pick up the share through the `ram_resource_share_arn` and `vault_arn` outputs.
+
+  ## Placing recovery points under legal hold
+
+  ```yaml
+  # inputs.yaml
+  vault:
+    create: true
+    name_prefix: "acme-prod"
+
+  region_settings:
+    enabled: false
+
+  backup_plans: {}
+
+  legal_holds:
+    case1234:
+      title: "Case 1234"
+      description: "Litigation hold for case 1234"
+      recovery_point_selection:
+        vault_names:
+          - "acme-prod-pla-pro-prod-001-usea1-vault"
+        date_range:
+          from_date: "2026-01-01T00:00:00Z"
+          to_date: "2026-12-31T23:59:59Z"
+    audit:
+      title: "Annual audit"
+      description: "Hold across all recovery points, no selection criteria"
+  ```
+
+  Requires the `awscc` provider. Recovery points under an active hold cannot be deleted and do not
+  expire; removing the entry cancels the hold.
 
   ## Attaching plans to an existing vault
 

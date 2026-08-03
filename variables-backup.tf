@@ -162,21 +162,47 @@ variable "backup_plans" {
 ##
 # YAML schema for legal holds
 #
-# NOT IMPLEMENTED. The AWS provider exposes no legal hold resource or data source, so this module
-# cannot manage legal holds. The variable is retained to keep the module interface stable, and is
-# validated to be empty so that a configuration is never silently ignored. Create legal holds with
-# the AWS CLI (`aws backup create-legal-hold`) or the console until provider support lands.
+# Implemented with the awscc (Cloud Control) provider, because the classic AWS provider exposes no
+# legal hold resource. A legal hold preserves the selected recovery points: they cannot be deleted
+# and their lifecycle-based expiration is suspended while the hold is active.
 #
-# legal_holds: {}
+# Removing an entry cancels the hold. Title, description and selection are immutable on the AWS side,
+# so changing any of them replaces the hold.
+#
+# legal_holds:
+#   case1234:                                     # Map key, used as the Terraform resource key only.
+#     title: "Case 1234"                          # (Required) Short title of the legal hold.
+#     description: "Litigation hold for case 1234" # (Required) Description of the legal hold.
+#     recovery_point_selection:                   # (Optional) Criteria selecting the retained recovery points.
+#       vault_names:                              # (Optional) Vault names whose recovery points are held.
+#         - "acme-prod-vault"
+#       resource_identifiers:                     # (Optional) Resource ARNs whose recovery points are held.
+#         - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
+#       date_range:                               # (Optional) Restrict the hold to recovery points in this window.
+#         from_date: "2026-01-01T00:00:00Z"       # (Required within date_range) Inclusive start, ISO 8601.
+#         to_date: "2026-12-31T23:59:59Z"         # (Required within date_range) Inclusive end, ISO 8601.
 #
 variable "legal_holds" {
-  description = "(unsupported) Reserved for future legal hold support. Must be empty; the AWS provider has no legal hold resource."
-  type        = any # (Optional) Must be empty. Retained for interface stability.
-  default     = {}  # (Optional) No legal holds by default.
+  description = "(optional) Legal holds to create, keyed by name. Requires the awscc provider. If not set, no legal holds will be created"
+  type = map(object({
+    title       = string # (Required) Short title of the legal hold
+    description = string # (Required) Description of the legal hold
+    recovery_point_selection = optional(object({
+      vault_names          = optional(list(string), []) # (Optional) Vault names whose recovery points are held. Default: []
+      resource_identifiers = optional(list(string), []) # (Optional) Resource ARNs whose recovery points are held. Default: []
+      date_range = optional(object({
+        from_date = string # (Required within date_range) Inclusive start, ISO 8601 date-time
+        to_date   = string # (Required within date_range) Inclusive end, ISO 8601 date-time
+      }), null)            # (Optional) Restrict the hold to a time window. Default: null (no restriction)
+    }), {})                # (Optional) Selection criteria. Default: {} (all recovery points)
+  }))
+  default = {} # (Optional) No legal holds by default.
 
   validation {
-    condition     = length(var.legal_holds) == 0
-    error_message = "legal_holds is not implemented: the AWS provider exposes no legal hold resource. Manage legal holds with the AWS CLI or console, and leave this variable empty."
+    condition = alltrue([
+      for key, hold in var.legal_holds : trimspace(hold.title) != "" && trimspace(hold.description) != ""
+    ])
+    error_message = "Each legal_holds entry must set a non-empty title and description."
   }
 }
 
