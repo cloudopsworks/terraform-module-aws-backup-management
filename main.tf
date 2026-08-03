@@ -16,8 +16,8 @@ locals {
   # Key rotation is always enabled; rotation_period defaults to 90 days.
   _enc = var.vault.encryption != null ? var.vault.encryption : {
     create          = coalesce(var.vault.encryption_create_key, false)
-    key             = coalesce(var.vault.encryption_key, "")
-    alias           = coalesce(var.vault.encryption_alias, "")
+    key             = var.vault.encryption_key != "" ? var.vault.encryption_key : ""
+    alias           = var.vault.encryption_alias != "" ? var.vault.encryption_alias : ""
     deletion_window = 30
     key_description = ""
     rotation_period = 90

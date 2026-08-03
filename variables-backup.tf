@@ -50,9 +50,9 @@ variable "vault" {
     # DEPRECATED: use vault.encryption.create instead
     encryption_create_key = optional(bool, null) # DEPRECATED: use vault.encryption.create
     # DEPRECATED: use vault.encryption.key instead
-    encryption_key = optional(string, null) # DEPRECATED: use vault.encryption.key
+    encryption_key = optional(string, "") # DEPRECATED: use vault.encryption.key
     # DEPRECATED: use vault.encryption.alias instead
-    encryption_alias = optional(string, null) # DEPRECATED: use vault.encryption.alias
+    encryption_alias = optional(string, "") # DEPRECATED: use vault.encryption.alias
 
     force_destroy = optional(bool, false) # (Optional) Force destroy the vault even if it contains backups. Default: false
   })
