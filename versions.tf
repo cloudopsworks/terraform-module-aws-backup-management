@@ -15,5 +15,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.35"
     }
+    # Legal holds only. The classic AWS provider exposes no legal hold resource,
+    # so awscc (Cloud Control) is used for aws_backup_legal_hold coverage.
+    awscc = {
+      source  = "hashicorp/awscc"
+      version = "~> 1.95"
+    }
   }
 }

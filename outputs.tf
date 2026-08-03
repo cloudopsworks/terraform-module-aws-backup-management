@@ -71,6 +71,21 @@ output "backup_selection_ids" {
   value       = { for key, selection in aws_backup_selection.this : key => selection.id }
 }
 
+output "legal_hold_ids" {
+  description = "Map of legal hold key to legal hold ID."
+  value       = { for key, hold in awscc_backup_legal_hold.this : key => hold.legal_hold_id }
+}
+
+output "legal_hold_arns" {
+  description = "Map of legal hold key to legal hold ARN."
+  value       = { for key, hold in awscc_backup_legal_hold.this : key => hold.arn }
+}
+
+output "legal_hold_statuses" {
+  description = "Map of legal hold key to the current status reported by AWS Backup."
+  value       = { for key, hold in awscc_backup_legal_hold.this : key => hold.status }
+}
+
 output "ram_resource_share_arn" {
   description = "ARN of the AWS RAM resource share for the vault. Null when ram.enabled is false."
   value       = local.ram_enabled ? aws_ram_resource_share.this[0].arn : null

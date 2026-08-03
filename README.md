@@ -61,6 +61,7 @@ It supports:
 - A module-managed IAM backup service role, created automatically when the module owns the vault.
 - Advanced backup options per resource type (e.g. Windows VSS) and AWS Backup Region Settings opt-ins.
 - Cross-account vault sharing through AWS RAM, including sharing outside the AWS Organization.
+- Legal holds that suspend expiration of the selected recovery points, via the awscc provider.
 
 ## Outputs
 
@@ -93,12 +94,19 @@ principal listed in `ram.accounts`. Sharing requires `vault.create = true`, sinc
 share a vault it manages. Sharing with accounts outside your AWS Organization additionally requires
 `ram.allow_external_principals = true`.
 
-## Legal holds are not supported
+## Legal holds
 
-The `legal_holds` variable exists to keep the module interface stable, but it is **not implemented**:
-the AWS provider exposes no legal hold resource or data source, so there is nothing for the module to
-manage. The variable is validated to be empty, so a configuration is never silently ignored. Create
-legal holds with `aws backup create-legal-hold` or the console until provider support lands.
+Legal holds preserve the selected recovery points: while a hold is active they cannot be deleted and
+their lifecycle-based expiration is suspended. Removing an entry from `legal_holds` cancels the hold.
+
+Because the classic AWS provider exposes no legal hold resource, these are provisioned with the
+**`hashicorp/awscc`** (Cloud Control) provider. Deployments that set `legal_holds` therefore need the
+`awscc` provider available in addition to `aws`; both read the same standard AWS credential sources.
+When `legal_holds` is left empty no legal hold resources are created, but the provider requirement
+still applies to the module as a whole.
+
+`title`, `description`, and the recovery point selection are immutable in AWS Backup, so changing any
+of them replaces the hold.
 
 ## Using an externally managed vault
 
@@ -183,7 +191,18 @@ ram:
   accounts: []            # (Required when enabled) AWS account IDs (12 digits) or Organizations ARNs. Default: []
   allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-# legal_holds: # (Unsupported) Must stay empty — the AWS provider has no legal hold resource. Default: {}
+# legal_holds: # (Optional) Legal holds keyed by name. Requires the awscc provider. Default: {}
+#   case1234:
+#     title: "Case 1234"                           # (Required) Short title of the legal hold
+#     description: "Litigation hold for case 1234" # (Required) Description of the legal hold
+#     recovery_point_selection:                    # (Optional) Criteria selecting the held recovery points. Default: {} (all)
+#       vault_names:                               # (Optional) Vault names whose recovery points are held. Default: []
+#         - "acme-prod-vault"
+#       resource_identifiers:                      # (Optional) Resource ARNs whose recovery points are held. Default: []
+#         - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
+#       date_range:                                # (Optional) Restrict the hold to a window. Default: null
+#         from_date: "2026-01-01T00:00:00Z"        # (Required within date_range) Inclusive start, ISO 8601
+#         to_date: "2026-12-31T23:59:59Z"          # (Required within date_range) Inclusive end, ISO 8601
 legal_holds: {}
 ```
 
@@ -464,6 +483,37 @@ backup_plans:
 Creates the vault, a RAM resource share, and one principal association per listed account. Consumers
 can pick up the share through the `ram_resource_share_arn` and `vault_arn` outputs.
 
+## Placing recovery points under legal hold
+
+```yaml
+# inputs.yaml
+vault:
+  create: true
+  name_prefix: "acme-prod"
+
+region_settings:
+  enabled: false
+
+backup_plans: {}
+
+legal_holds:
+  case1234:
+    title: "Case 1234"
+    description: "Litigation hold for case 1234"
+    recovery_point_selection:
+      vault_names:
+        - "acme-prod-pla-pro-prod-001-usea1-vault"
+      date_range:
+        from_date: "2026-01-01T00:00:00Z"
+        to_date: "2026-12-31T23:59:59Z"
+  audit:
+    title: "Annual audit"
+    description: "Hold across all recovery points, no selection criteria"
+```
+
+Requires the `awscc` provider. Recovery points under an active hold cannot be deleted and do not
+expire; removing the entry cancels the hold.
+
 ## Attaching plans to an existing vault
 
 ```yaml
@@ -512,12 +562,14 @@ Available targets:
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.35 |
+| <a name="requirement_awscc"></a> [awscc](#requirement\_awscc) | ~> 1.95 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.35 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.57.1 |
+| <a name="provider_awscc"></a> [awscc](#provider\_awscc) | 1.95.0 |
 
 ## Modules
 
@@ -541,6 +593,7 @@ Available targets:
 | [aws_ram_principal_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_principal_association) | resource |
 | [aws_ram_resource_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_resource_association) | resource |
 | [aws_ram_resource_share.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_resource_share) | resource |
+| [awscc_backup_legal_hold.this](https://registry.terraform.io/providers/hashicorp/awscc/latest/docs/resources/backup_legal_hold) | resource |
 | [aws_iam_policy_document.backup_service_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_kms_alias.key](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/kms_alias) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
@@ -553,7 +606,7 @@ Available targets:
 | <a name="input_backup_plans"></a> [backup\_plans](#input\_backup\_plans) | (optional) List of backup plans to create. If not set, no backup plans will be created | `any` | `{}` | no |
 | <a name="input_extra_tags"></a> [extra\_tags](#input\_extra\_tags) | Extra tags to add to the resources | `map(string)` | `{}` | no |
 | <a name="input_is_hub"></a> [is\_hub](#input\_is\_hub) | Is this a hub or spoke configuration? | `bool` | `false` | no |
-| <a name="input_legal_holds"></a> [legal\_holds](#input\_legal\_holds) | (unsupported) Reserved for future legal hold support. Must be empty; the AWS provider has no legal hold resource. | `any` | `{}` | no |
+| <a name="input_legal_holds"></a> [legal\_holds](#input\_legal\_holds) | (optional) Legal holds to create, keyed by name. Requires the awscc provider. If not set, no legal holds will be created | <pre>map(object({<br/>    title       = string # (Required) Short title of the legal hold<br/>    description = string # (Required) Description of the legal hold<br/>    recovery_point_selection = optional(object({<br/>      vault_names          = optional(list(string), []) # (Optional) Vault names whose recovery points are held. Default: []<br/>      resource_identifiers = optional(list(string), []) # (Optional) Resource ARNs whose recovery points are held. Default: []<br/>      date_range = optional(object({<br/>        from_date = string # (Required within date_range) Inclusive start, ISO 8601 date-time<br/>        to_date   = string # (Required within date_range) Inclusive end, ISO 8601 date-time<br/>      }), null)            # (Optional) Restrict the hold to a time window. Default: null (no restriction)<br/>    }), {})                # (Optional) Selection criteria. Default: {} (all recovery points)<br/>  }))</pre> | `{}` | no |
 | <a name="input_org"></a> [org](#input\_org) | Organization details | <pre>object({<br/>    organization_name = string<br/>    organization_unit = string<br/>    environment_type  = string<br/>    environment_name  = string<br/>  })</pre> | n/a | yes |
 | <a name="input_ram"></a> [ram](#input\_ram) | (optional) If true, the backup vault will be shared with other AWS accounts. | <pre>object({<br/>    enabled                   = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false<br/>    accounts                  = optional(list(string), []) # (Optional) AWS Account IDs or organization ARNs to share with. Default: []<br/>    allow_external_principals = optional(bool, false)      # (Optional) Allow principals outside the AWS Organization. Default: false<br/>  })</pre> | <pre>{<br/>  "accounts": [],<br/>  "allow_external_principals": false,<br/>  "enabled": false<br/>}</pre> | no |
 | <a name="input_region_settings"></a> [region\_settings](#input\_region\_settings) | (optional) AWS Backup Region Settings configuration | <pre>object({<br/>    enabled               = optional(bool, false)     # (Optional) Enable region settings management. Default: false<br/>    opt_ins               = optional(map(string), {}) # (Optional) Resource opt-in map. Values: ENABLED|DISABLED. Default: {}<br/>    management_preference = optional(map(string), {}) # (Optional) Management preference map. Values: SYSTEM|USER. Default: {}<br/>  })</pre> | n/a | yes |
@@ -573,6 +626,9 @@ Available targets:
 | <a name="output_kms_alias_name"></a> [kms\_alias\_name](#output\_kms\_alias\_name) | Name of the KMS alias created by this module. Null unless vault.encryption.create is true. |
 | <a name="output_kms_key_arn"></a> [kms\_key\_arn](#output\_kms\_key\_arn) | ARN of the KMS key protecting the vault, whether created by this module or supplied as input. Null when the vault is unencrypted or uses an AWS-owned key. |
 | <a name="output_kms_key_id"></a> [kms\_key\_id](#output\_kms\_key\_id) | Key ID of the KMS key created by this module. Null unless vault.encryption.create is true. |
+| <a name="output_legal_hold_arns"></a> [legal\_hold\_arns](#output\_legal\_hold\_arns) | Map of legal hold key to legal hold ARN. |
+| <a name="output_legal_hold_ids"></a> [legal\_hold\_ids](#output\_legal\_hold\_ids) | Map of legal hold key to legal hold ID. |
+| <a name="output_legal_hold_statuses"></a> [legal\_hold\_statuses](#output\_legal\_hold\_statuses) | Map of legal hold key to the current status reported by AWS Backup. |
 | <a name="output_ram_resource_share_arn"></a> [ram\_resource\_share\_arn](#output\_ram\_resource\_share\_arn) | ARN of the AWS RAM resource share for the vault. Null when ram.enabled is false. |
 | <a name="output_ram_shared_principals"></a> [ram\_shared\_principals](#output\_ram\_shared\_principals) | Principals the vault is shared with through AWS RAM. |
 | <a name="output_vault_arn"></a> [vault\_arn](#output\_vault\_arn) | ARN of the backup vault managed by this module, standard or logically air-gapped. Null when vault.create is false. |

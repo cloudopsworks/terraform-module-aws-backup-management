@@ -117,7 +117,21 @@ ram:
   accounts: []
   allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-# legal_holds: # (Unsupported) Not implemented — the AWS provider exposes no legal hold resource, so this
-#   must remain empty. A non-empty value fails validation rather than being silently ignored.
-#   Create legal holds with `aws backup create-legal-hold` or the console instead. Default: {}
+# legal_holds: # (Optional) Legal holds keyed by name. Default: {} (none created)
+#   Provisioned with the awscc (Cloud Control) provider, because the classic AWS provider exposes no
+#   legal hold resource. Recovery points under an active hold cannot be deleted and their lifecycle
+#   expiration is suspended; removing an entry cancels the hold. title, description and the selection
+#   are immutable in AWS Backup, so changing any of them replaces the hold.
+#
+#   case1234:                                      # Map key, used as the Terraform resource key only
+#     title: "Case 1234"                           # (Required) Short title of the legal hold
+#     description: "Litigation hold for case 1234" # (Required) Description of the legal hold
+#     recovery_point_selection:                    # (Optional) Criteria selecting the held recovery points. Default: {} (all)
+#       vault_names:                               # (Optional) Vault names whose recovery points are held. Default: []
+#         - "acme-prod-vault"
+#       resource_identifiers:                      # (Optional) Resource ARNs whose recovery points are held. Default: []
+#         - "arn:aws:ec2:us-east-1:111122223333:volume/vol-123"
+#       date_range:                                # (Optional) Restrict the hold to a time window. Default: null (no restriction)
+#         from_date: "2026-01-01T00:00:00Z"        # (Required within date_range) Inclusive start, ISO 8601 date-time
+#         to_date: "2026-12-31T23:59:59Z"          # (Required within date_range) Inclusive end, ISO 8601 date-time
 legal_holds: {}
