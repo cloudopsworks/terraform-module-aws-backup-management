@@ -63,3 +63,14 @@ resource "aws_backup_logically_air_gapped_vault" "this" {
   max_retention_days = var.air_gapped.max_retention_days
   tags               = local.all_tags
 }
+
+locals {
+  # Effective vault identifiers, resolved across the standard and air-gapped variants.
+  # Both are null when the module does not create the vault (vault.create = false).
+  vault_arn = var.vault.create ? (
+    var.air_gapped.enabled ? aws_backup_logically_air_gapped_vault.this[0].arn : aws_backup_vault.this[0].arn
+  ) : null
+  vault_name = var.vault.create ? (
+    var.air_gapped.enabled ? aws_backup_logically_air_gapped_vault.this[0].name : aws_backup_vault.this[0].name
+  ) : null
+}

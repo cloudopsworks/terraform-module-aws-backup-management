@@ -67,21 +67,40 @@ variable "vault" {
 ##
 # YAML schema for AWS RAM (Resource Access Manager) sharing
 #
+# Sharing requires the module to own the vault (vault.create = true).
+# Sharing outside your AWS Organization additionally requires allow_external_principals = true.
+#
 # ram:
 #   enabled: false              # (Optional) Enable sharing the vault using AWS RAM. Default: false.
-#   accounts:                   # (Optional) List of AWS account IDs to share the vault with when enabled.
+#   accounts:                   # (Optional) AWS account IDs (12 digits) or organization/OU ARNs to share with.
 #     - "111122223333"
 #     - "444455556666"
+#   allow_external_principals: false  # (Optional) Allow principals outside your AWS Organization. Default: false.
 #
 variable "ram" {
   description = "(optional) If true, the backup vault will be shared with other AWS accounts."
   type = object({
-    enabled  = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false
-    accounts = optional(list(string), []) # (Optional) AWS Account IDs to share with when enabled. Default: []
+    enabled                   = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false
+    accounts                  = optional(list(string), []) # (Optional) AWS Account IDs or organization ARNs to share with. Default: []
+    allow_external_principals = optional(bool, false)      # (Optional) Allow principals outside the AWS Organization. Default: false
   })
   default = {
-    enabled  = false
-    accounts = []
+    enabled                   = false
+    accounts                  = []
+    allow_external_principals = false
+  }
+
+  validation {
+    condition     = !var.ram.enabled || length(var.ram.accounts) > 0
+    error_message = "ram.accounts must contain at least one principal when ram.enabled is true."
+  }
+
+  validation {
+    condition = alltrue([
+      for account in var.ram.accounts :
+      can(regex("^[0-9]{12}$", account)) || can(regex("^arn:aws[a-zA-Z-]*:organizations::", account))
+    ])
+    error_message = "Each ram.accounts entry must be a 12-digit AWS account ID or an AWS Organizations ARN."
   }
 }
 
@@ -142,20 +161,23 @@ variable "backup_plans" {
 
 ##
 # YAML schema for legal holds
-# Note: Legal hold support may require aws_backup_legal_hold resources. Define here for forward/extended usage.
 #
-# legal_holds:
-#   <hold_key>:
-#     description: "Case 1234"      # (Optional) Human description for the legal hold.
-#     resource_arns:                 # (Required) List of ARNs under legal hold.
-#       - "arn:aws:ec2:...:volume/vol-123"
-#     tags:                          # (Optional) Tags to set on the legal hold.
-#       "Case": "1234"
+# NOT IMPLEMENTED. The AWS provider exposes no legal hold resource or data source, so this module
+# cannot manage legal holds. The variable is retained to keep the module interface stable, and is
+# validated to be empty so that a configuration is never silently ignored. Create legal holds with
+# the AWS CLI (`aws backup create-legal-hold`) or the console until provider support lands.
+#
+# legal_holds: {}
 #
 variable "legal_holds" {
-  description = "(optional) List of legal holds to create. If not set, no legal holds will be created"
-  type        = any # (Optional) Free-form object map as documented above.
+  description = "(unsupported) Reserved for future legal hold support. Must be empty; the AWS provider has no legal hold resource."
+  type        = any # (Optional) Must be empty. Retained for interface stability.
   default     = {}  # (Optional) No legal holds by default.
+
+  validation {
+    condition     = length(var.legal_holds) == 0
+    error_message = "legal_holds is not implemented: the AWS provider exposes no legal hold resource. Manage legal holds with the AWS CLI or console, and leave this variable empty."
+  }
 }
 
 ##

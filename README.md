@@ -60,6 +60,15 @@ It supports:
 - Backup selections by tag, by explicit ARN, and by condition expressions.
 - A module-managed IAM backup service role, created automatically when the module owns the vault.
 - Advanced backup options per resource type (e.g. Windows VSS) and AWS Backup Region Settings opt-ins.
+- Cross-account vault sharing through AWS RAM, including sharing outside the AWS Organization.
+
+## Outputs
+
+The module exports the vault, KMS, IAM, plan, selection, and RAM identifiers so downstream modules can
+reference them — for example `vault_arn` as a `copy_action.destination_vault_arn` in another region, or
+`backup_role_arn` when attaching selections elsewhere. Outputs tied to optional resources return `null`
+when those resources are not created (e.g. `vault_arn` when `vault.create = false`). See the Outputs
+table below for the full list.
 
 ## Resource naming
 
@@ -77,18 +86,26 @@ Names are derived from the organization and spoke values supplied by the Terragr
 Where `<system>` is a short slug built from the organization unit, environment name, environment type,
 spoke identifier, and region.
 
-## Reserved inputs
+## Cross-account sharing
 
-The `ram` and `legal_holds` variables are accepted by the module and validated as part of its interface,
-but no `aws_ram_*` or `aws_backup_legal_hold` resources are provisioned yet. Set them only to pin the
-intended configuration ahead of a future release.
+Setting `ram.enabled = true` creates an AWS RAM resource share for the vault and associates every
+principal listed in `ram.accounts`. Sharing requires `vault.create = true`, since the module can only
+share a vault it manages. Sharing with accounts outside your AWS Organization additionally requires
+`ram.allow_external_principals = true`.
 
-## Known limitations
+## Legal holds are not supported
 
-- Backup selections currently resolve their IAM role only from the module-managed backup service role.
-  Running with `vault.create = false` together with `backup_plans.<plan>.resources` does not pick up the
-  per-plan `role_arn` and will fail during plan. Until this is addressed, use `vault.create = true`, or
-  omit `resources` and manage the selections outside this module.
+The `legal_holds` variable exists to keep the module interface stable, but it is **not implemented**:
+the AWS provider exposes no legal hold resource or data source, so there is nothing for the module to
+manage. The variable is validated to be empty, so a configuration is never silently ignored. Create
+legal holds with `aws backup create-legal-hold` or the console until provider support lands.
+
+## Using an externally managed vault
+
+With `vault.create = false` the module creates neither the vault nor the backup service role. In that
+mode each plan must supply its own `role_arn`, and every rule must name the existing vault through
+`target_vault_name`. The module enforces the `role_arn` requirement with a precondition, so a missing
+value fails during plan with an explicit message rather than at apply time.
 
 ## Usage
 
@@ -160,12 +177,13 @@ region_settings:
 # backup_plans: # (Optional) Map of backup plans to create, keyed by plan name. Default: {} (no plans created)
 backup_plans: {}
 
-# ram: # (Optional) Cross-account vault sharing. RESERVED — accepted but not provisioned yet
+# ram: # (Optional) Cross-account vault sharing through AWS RAM. Requires vault.create=true
 ram:
-  enabled: false          # (Optional) Reserved for AWS RAM sharing of the vault. Default: false
-  accounts: []            # (Optional) AWS account IDs to share the vault with. Default: []
+  enabled: false          # (Optional) Share the managed vault via AWS RAM. Default: false
+  accounts: []            # (Required when enabled) AWS account IDs (12 digits) or Organizations ARNs. Default: []
+  allow_external_principals: false # (Optional) Allow principals outside your AWS Organization. Default: false
 
-# legal_holds: # (Optional) Legal holds. RESERVED — accepted but not provisioned yet. Default: {}
+# legal_holds: # (Unsupported) Must stay empty — the AWS provider has no legal hold resource. Default: {}
 legal_holds: {}
 ```
 
@@ -175,7 +193,8 @@ A populated `backup_plans` entry looks like this:
 backup_plans:
   primary:                                    # Plan name fragment; final name is "primary-<system>-plan"
     # role_arn: "arn:aws:iam::111122223333:role/BackupServiceRole"
-    #                                         # (Optional) Only consulted when vault.create=false
+    #                                         # (Required when vault.create=false and resources are set)
+    #                                         #   Ignored when vault.create=true; the module-created role is used
     rules:                                    # (Required) Map of backup rules, keyed by rule name
       daily:
         # target_vault_name: "existing-vault" # (Required when vault.create=false) Pre-existing target vault
@@ -413,10 +432,39 @@ backup_plans:
 Logically air-gapped vaults are always managed by an AWS-owned key, so the `vault.encryption` settings do
 not apply to them.
 
-## Attaching plans to an existing vault
+## Sharing the vault across accounts
 
-> **Note:** see *Known limitations* — combining `vault.create: false` with a `resources` block is not
-> functional yet, because the per-plan `role_arn` is not resolved for selections.
+```yaml
+# inputs.yaml
+vault:
+  create: true
+  name_prefix: "acme-shared"
+  encryption:
+    create: true
+
+region_settings:
+  enabled: false
+
+ram:
+  enabled: true
+  accounts:
+    - "111122223333"
+    - "444455556666"
+  allow_external_principals: false   # true only when sharing outside your AWS Organization
+
+backup_plans:
+  central:
+    rules:
+      daily:
+        schedule: "cron(0 4 * * ? *)"
+        lifecycle:
+          delete_after: 90
+```
+
+Creates the vault, a RAM resource share, and one principal association per listed account. Consumers
+can pick up the share through the `ram_resource_share_arn` and `vault_arn` outputs.
+
+## Attaching plans to an existing vault
 
 ```yaml
 # inputs.yaml
@@ -469,7 +517,7 @@ Available targets:
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.35 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.57.1 |
 
 ## Modules
 
@@ -490,6 +538,9 @@ Available targets:
 | [aws_iam_role_policy_attachment.backup_service_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_kms_alias.create](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
 | [aws_kms_key.create](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
+| [aws_ram_principal_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_principal_association) | resource |
+| [aws_ram_resource_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_resource_association) | resource |
+| [aws_ram_resource_share.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ram_resource_share) | resource |
 | [aws_iam_policy_document.backup_service_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_kms_alias.key](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/kms_alias) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
@@ -502,16 +553,31 @@ Available targets:
 | <a name="input_backup_plans"></a> [backup\_plans](#input\_backup\_plans) | (optional) List of backup plans to create. If not set, no backup plans will be created | `any` | `{}` | no |
 | <a name="input_extra_tags"></a> [extra\_tags](#input\_extra\_tags) | Extra tags to add to the resources | `map(string)` | `{}` | no |
 | <a name="input_is_hub"></a> [is\_hub](#input\_is\_hub) | Is this a hub or spoke configuration? | `bool` | `false` | no |
-| <a name="input_legal_holds"></a> [legal\_holds](#input\_legal\_holds) | (optional) List of legal holds to create. If not set, no legal holds will be created | `any` | `{}` | no |
+| <a name="input_legal_holds"></a> [legal\_holds](#input\_legal\_holds) | (unsupported) Reserved for future legal hold support. Must be empty; the AWS provider has no legal hold resource. | `any` | `{}` | no |
 | <a name="input_org"></a> [org](#input\_org) | Organization details | <pre>object({<br/>    organization_name = string<br/>    organization_unit = string<br/>    environment_type  = string<br/>    environment_name  = string<br/>  })</pre> | n/a | yes |
-| <a name="input_ram"></a> [ram](#input\_ram) | (optional) If true, the backup vault will be shared with other AWS accounts. | <pre>object({<br/>    enabled  = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false<br/>    accounts = optional(list(string), []) # (Optional) AWS Account IDs to share with when enabled. Default: []<br/>  })</pre> | <pre>{<br/>  "accounts": [],<br/>  "enabled": false<br/>}</pre> | no |
+| <a name="input_ram"></a> [ram](#input\_ram) | (optional) If true, the backup vault will be shared with other AWS accounts. | <pre>object({<br/>    enabled                   = optional(bool, false)      # (Optional) Enable RAM sharing. Default: false<br/>    accounts                  = optional(list(string), []) # (Optional) AWS Account IDs or organization ARNs to share with. Default: []<br/>    allow_external_principals = optional(bool, false)      # (Optional) Allow principals outside the AWS Organization. Default: false<br/>  })</pre> | <pre>{<br/>  "accounts": [],<br/>  "allow_external_principals": false,<br/>  "enabled": false<br/>}</pre> | no |
 | <a name="input_region_settings"></a> [region\_settings](#input\_region\_settings) | (optional) AWS Backup Region Settings configuration | <pre>object({<br/>    enabled               = optional(bool, false)     # (Optional) Enable region settings management. Default: false<br/>    opt_ins               = optional(map(string), {}) # (Optional) Resource opt-in map. Values: ENABLED|DISABLED. Default: {}<br/>    management_preference = optional(map(string), {}) # (Optional) Management preference map. Values: SYSTEM|USER. Default: {}<br/>  })</pre> | n/a | yes |
 | <a name="input_spoke_def"></a> [spoke\_def](#input\_spoke\_def) | Spoke ID Number, must be a 3 digit number | `string` | `"001"` | no |
 | <a name="input_vault"></a> [vault](#input\_vault) | (optional) Vault Configuration | <pre>object({<br/>    create      = optional(bool, true) # (Optional) Create the backup vault with this module. Default: true<br/>    name        = optional(string, "") # (Optional) Vault name. Required if name_prefix is not set. Mutually exclusive with name_prefix<br/>    name_prefix = optional(string, "") # (Optional) Vault name prefix. Required if name is not set. Mutually exclusive with name<br/><br/>    # Preferred encryption sub-object — takes precedence over the deprecated flat fields below.<br/>    encryption = optional(object({<br/>      create          = optional(bool, false) # (Optional) Create a new KMS key and alias for the vault. Default: false<br/>      key             = optional(string, "")  # (Optional) Existing KMS Key ARN. Used when create=false<br/>      alias           = optional(string, "")  # (Optional) Existing KMS Alias (format: alias/<name>). Used when key is empty and create=false<br/>      deletion_window = optional(number, 30)  # (Optional) KMS key deletion window in days (7–30). Default: 30<br/>      key_description = optional(string, "")  # (Optional) Custom description for the created KMS key. Default: auto-generated from vault name<br/>      rotation_period = optional(number, 90)  # (Optional) KMS key rotation period in days (90–2560). Default: 90. Rotation is always enabled<br/>    }), null)<br/><br/>    # DEPRECATED: use vault.encryption.create instead<br/>    encryption_create_key = optional(bool, null) # DEPRECATED: use vault.encryption.create<br/>    # DEPRECATED: use vault.encryption.key instead<br/>    encryption_key = optional(string, "") # DEPRECATED: use vault.encryption.key<br/>    # DEPRECATED: use vault.encryption.alias instead<br/>    encryption_alias = optional(string, "") # DEPRECATED: use vault.encryption.alias<br/><br/>    force_destroy = optional(bool, false) # (Optional) Force destroy the vault even if it contains backups. Default: false<br/>  })</pre> | <pre>{<br/>  "create": false,<br/>  "force_destroy": false,<br/>  "name": "",<br/>  "name_prefix": ""<br/>}</pre> | no |
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_backup_plan_arns"></a> [backup\_plan\_arns](#output\_backup\_plan\_arns) | Map of backup plan key to backup plan ARN. |
+| <a name="output_backup_plan_ids"></a> [backup\_plan\_ids](#output\_backup\_plan\_ids) | Map of backup plan key to backup plan ID. |
+| <a name="output_backup_plan_versions"></a> [backup\_plan\_versions](#output\_backup\_plan\_versions) | Map of backup plan key to the currently deployed plan version. |
+| <a name="output_backup_role_arn"></a> [backup\_role\_arn](#output\_backup\_role\_arn) | ARN of the IAM backup service role created by this module. Null when vault.create is false, where per-plan role\_arn values are used instead. |
+| <a name="output_backup_role_name"></a> [backup\_role\_name](#output\_backup\_role\_name) | Name of the IAM backup service role created by this module. Null when vault.create is false. |
+| <a name="output_backup_selection_ids"></a> [backup\_selection\_ids](#output\_backup\_selection\_ids) | Map of "<plan\_key>-<resource\_key>" to backup selection ID. |
+| <a name="output_kms_alias_name"></a> [kms\_alias\_name](#output\_kms\_alias\_name) | Name of the KMS alias created by this module. Null unless vault.encryption.create is true. |
+| <a name="output_kms_key_arn"></a> [kms\_key\_arn](#output\_kms\_key\_arn) | ARN of the KMS key protecting the vault, whether created by this module or supplied as input. Null when the vault is unencrypted or uses an AWS-owned key. |
+| <a name="output_kms_key_id"></a> [kms\_key\_id](#output\_kms\_key\_id) | Key ID of the KMS key created by this module. Null unless vault.encryption.create is true. |
+| <a name="output_ram_resource_share_arn"></a> [ram\_resource\_share\_arn](#output\_ram\_resource\_share\_arn) | ARN of the AWS RAM resource share for the vault. Null when ram.enabled is false. |
+| <a name="output_ram_shared_principals"></a> [ram\_shared\_principals](#output\_ram\_shared\_principals) | Principals the vault is shared with through AWS RAM. |
+| <a name="output_vault_arn"></a> [vault\_arn](#output\_vault\_arn) | ARN of the backup vault managed by this module, standard or logically air-gapped. Null when vault.create is false. |
+| <a name="output_vault_is_air_gapped"></a> [vault\_is\_air\_gapped](#output\_vault\_is\_air\_gapped) | Whether the managed vault is a logically air-gapped vault. |
+| <a name="output_vault_name"></a> [vault\_name](#output\_vault\_name) | Name of the backup vault managed by this module. Null when vault.create is false. |
 
 
 
