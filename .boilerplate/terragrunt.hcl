@@ -22,6 +22,24 @@ locals {
 
 include "root" {
   path = find_in_parent_folders("{{ .RootFileName }}")
+  inherit = true
+}
+
+# The module also uses the awscc provider (Application Signals discovery and X-Ray Transaction Search), which the
+# root does not generate. It is configured like the root provider "aws": same region and STS role. Remove
+# assume_role when the root assumes the role (iam_role).
+generate "provider_awscc" {
+  path      = "provider_awscc.g.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+provider "awscc" {
+  region = "${try(local.region_vars.region, local.global_vars.default.region)}"
+  assume_role = {
+    role_arn     = "${try(local.region_vars.sts_role_arn, local.spoke_vars.sts_role_arn, local.global_vars.default.sts_role_arn)}"
+    session_name = "terragrunt"
+  }
+}
+EOF
 }
 
 terraform {
